@@ -41,6 +41,7 @@ internal static partial class CrossCheck
                 }
                 if (copy.ContainsKey(KernelFiles.Treasure)) copy[KernelFiles.Treasure][0x14 + 4 * 6 + 1] ^= 1;
                 if (copy.ContainsKey(KernelFiles.ItemShops)) copy[KernelFiles.ItemShops][0x14 + 2] ^= 1;
+                if (copy.TryGetValue(SphereGridFile.All[1].ContentsPath, out byte[]? standard)) standard[SphereGridFile.ContentsHeader] ^= 1;
                 files = copy;
             }
 
@@ -66,6 +67,11 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareShops(shops, stdout));
                 checkedAreas.Add($"{shops.Count} shops");
+            }
+            if (result.Spoiler[SphereGridFeature.Section] is JsonArray grids)
+            {
+                problems.AddRange(CompareSphereGrids(grids, result.Files, files));
+                checkedAreas.Add($"{grids.Count} sphere grids");
             }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
@@ -116,7 +122,7 @@ internal static partial class CrossCheck
     }
 
     /// <summary>Writes the changed files as a sparse override over the original data and runs one parser mode.</summary>
-    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode)
+    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode, params string[] modeArgs)
     {
         string root = Directory.CreateTempSubdirectory("ffxr-crosscheck-").FullName;
         string link = Path.Combine(root, "ffx_ps2");
@@ -136,7 +142,7 @@ internal static partial class CrossCheck
                 File.WriteAllBytes(target, bytes);
             }
 
-            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode])
+            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode, .. modeArgs])
             {
                 WorkingDirectory = ParserDir,
                 RedirectStandardOutput = true,

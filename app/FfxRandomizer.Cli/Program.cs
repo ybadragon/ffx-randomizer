@@ -5,7 +5,7 @@ using FfxRandomizer.Core.Storage;
 
 // Developer tool for checking the core against a real install without the window.
 //   ffxr status
-//   ffxr apply [--seed <text>] <option-id>...     e.g. ffxr apply tidus
+//   ffxr apply [--seed <text>] <option-id | choice-id=value>...     e.g. ffxr apply tidus gridmode=shuffle
 //   ffxr restore
 
 var game = GameInstall.FindSteamInstall();
@@ -35,6 +35,7 @@ try
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--seed" && i + 1 < args.Length) seed = new Seed(args[++i]);
+                else if (args[i].Split('=', 2) is [var choice, var value]) settings.Choices[choice] = value;
                 else settings.Toggles[args[i]] = true;
             }
             var outcome = service.Run(settings, seed, preset: null, new Progress<RunStep>(s => Console.WriteLine($"  {s}")));
@@ -44,7 +45,7 @@ try
 
         case "crosscheck":
         {
-            // ffxr crosscheck [--seeds N] <option-id>...   (randomizes in memory only; the game isn't touched)
+            // ffxr crosscheck [--seeds N] <option-id | choice-id=value>...   (randomizes in memory only; the game isn't touched)
             var checkSettings = RandomizerSettings.Defaults();
             int seedCount = 3;
             bool sabotage = false;
@@ -52,6 +53,7 @@ try
             {
                 if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
                 else if (args[i] == "--sabotage") sabotage = true;
+                else if (args[i].Split('=', 2) is [var choice, var value]) checkSettings.Choices[choice] = value;
                 else checkSettings.Toggles[args[i]] = true;
             }
             var original = service.Patcher.OpenOriginal();
