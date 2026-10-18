@@ -26,6 +26,9 @@ public static class RandomizerEngine
         new TidusHpFeature(),
         new EnemyRewardsFeature(),
         new EnemyElementsFeature(),
+        new TreasureFeature(),
+        new ItemShopsFeature(),
+        new CustomizationFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

@@ -16,15 +16,36 @@ public sealed class ItemPool
     public IReadOnlyList<ushort> KeyItems { get; }
 
     private readonly HashSet<ushort> _all;
+    private readonly Dictionary<ushort, List<int>> _quantities;
 
-    private ItemPool(SortedSet<ushort> items, SortedSet<ushort> keyItems)
+    private ItemPool(SortedSet<ushort> items, SortedSet<ushort> keyItems, Dictionary<ushort, List<int>> quantities)
     {
         Items = items.ToList();
         KeyItems = keyItems.ToList();
         _all = [.. items, .. keyItems];
+        _quantities = quantities;
     }
 
     public bool Contains(ushort item) => _all.Contains(item);
+
+    /// <summary>
+    /// How many of an item a chest or reward gives, shaped by the amounts the original game hands out
+    /// (FFXRando's getRandomItemQuantity for non-monster sources).
+    /// </summary>
+    public int RandomQuantity(Randomization.Rng rng, ushort item, bool sane)
+    {
+        if (!sane) return rng.Next(1, 99);
+        var seen = _quantities.GetValueOrDefault(item) ?? [1];
+        int min = seen.Min(), max = seen.Max();
+        double average = seen.Average();
+        double deviation = Math.Sqrt(seen.Average(q => (q - average) * (q - average)));
+        if (average > 10)
+        {
+            int center = Math.Min(min * 5, 7);
+            return rng.Normal(center, center / 5.0, Math.Min(min, 1), 99);
+        }
+        return average < 10 ? rng.Normal(average, deviation, Math.Max(min, 1), Math.Max(max, 1)) : Math.Max(min, 1);
+    }
 
     public static bool IsKeyItem(ushort item) => item > 9000;
 
@@ -32,10 +53,13 @@ public sealed class ItemPool
     {
         var items = new SortedSet<ushort>();
         var keyItems = new SortedSet<ushort>();
-        void Add(ushort item, bool key)
+        var quantities = new Dictionary<ushort, List<int>>();
+        void Add(ushort item, bool key, int quantity = 1)
         {
             if (item == 0) return;
             (key || IsKeyItem(item) ? keyItems : items).Add(item);
+            if (!quantities.TryGetValue(item, out var list)) quantities[item] = list = [];
+            list.Add(Math.Max(quantity, 1));
         }
 
         // Treasure: 4-byte records of flag, quantity, item. Flag 2 is an item, 10 a key item; 177 and 203 aren't items.
@@ -45,7 +69,7 @@ public sealed class ItemPool
             var r = treasure.Record(i);
             byte flag = r[0];
             ushort item = (ushort)(r[2] | r[3] << 8);
-            if ((flag == 2 || flag == 10) && item != 203 && item != 177) Add(item, flag == 10);
+            if ((flag == 2 || flag == 10) && item != 203 && item != 177) Add(item, flag == 10, r[1]);
         }
 
         // Item shops: 34-byte records holding 16 item ids from 0x02.
@@ -61,12 +85,12 @@ public sealed class ItemPool
             var monster = new MonsterFile(index, original.ReadFile(MonsterFile.PathFor(index)));
             if (!monster.HasLoot) continue;
             var loot = monster.Loot;
-            for (int slot = 0; slot < MonsterLoot.DropSlots.Count; slot++) Add(loot.Drop(slot).Item, false);
-            Add(loot.Steal.Item, false);
-            Add(loot.StealRare.Item, false);
-            Add(loot.Bribe.Item, false);
+            for (int slot = 0; slot < MonsterLoot.DropSlots.Count; slot++) Add(loot.Drop(slot).Item, false, loot.Drop(slot).Quantity);
+            Add(loot.Steal.Item, false, loot.Steal.Quantity);
+            Add(loot.StealRare.Item, false, loot.StealRare.Quantity);
+            Add(loot.Bribe.Item, false, loot.Bribe.Quantity);
         }
 
-        return new ItemPool(items, keyItems);
+        return new ItemPool(items, keyItems, quantities);
     }
 }

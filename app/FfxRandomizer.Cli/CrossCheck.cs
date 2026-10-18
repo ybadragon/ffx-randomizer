@@ -30,22 +30,45 @@ internal static partial class CrossCheck
         {
             var result = RandomizerEngine.Run(original, settings, seed, names);
             var problems = new List<string>(result.Problems);
-            if (result.Spoiler[EnemyRewardsFeature.Section] is JsonArray enemies)
+            var files = result.Files;
+            if (sabotage)
             {
-                var files = result.Files;
-                if (sabotage)
+                var copy = files.ToDictionary(f => f.Key, f => (byte[])f.Value.Clone());
+                if (copy.ContainsKey(MonsterFile.PathFor(1)))
                 {
-                    var copy = files.ToDictionary(f => f.Key, f => (byte[])f.Value.Clone());
                     var raldo = new MonsterFile(1, copy[MonsterFile.PathFor(1)]).Loot;
                     raldo.SetDrop(0, raldo.Drop(0) with { Item = (ushort)(raldo.Drop(0).Item ^ 1) });
-                    files = copy;
                 }
-                var (decoded, errors) = Decode(files);
+                if (copy.ContainsKey(KernelFiles.Treasure)) copy[KernelFiles.Treasure][0x14 + 4 * 6 + 1] ^= 1;
+                if (copy.ContainsKey(KernelFiles.ItemShops)) copy[KernelFiles.ItemShops][0x14 + 2] ^= 1;
+                files = copy;
+            }
+
+            var checkedAreas = new List<string>();
+            if (result.Spoiler[EnemyRewardsFeature.Section] is JsonArray enemies)
+            {
+                var (stdout, errors) = RunParser(files, "PARSE_ALL_MONSTERS");
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                var decoded = Parse(stdout);
                 foreach (var node in enemies) problems.AddRange(Compare((JsonObject)node!, decoded));
+                checkedAreas.Add($"{enemies.Count} enemies");
+            }
+            if (result.Spoiler[TreasureFeature.Section] is JsonArray treasure)
+            {
+                var (stdout, errors) = RunParser(files, "READ_TREASURES");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareTreasure(treasure, stdout));
+                checkedAreas.Add($"{treasure.Count} treasures");
+            }
+            if (result.Spoiler[ItemShopsFeature.ShopSection] is JsonArray shops)
+            {
+                var (stdout, errors) = RunParser(files, "READ_ITEM_SHOPS");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareShops(shops, stdout));
+                checkedAreas.Add($"{shops.Count} shops");
             }
             Console.WriteLine(problems.Count == 0
-                ? $"seed {seed}: OK ({result.Files.Count} files, every enemy matches FFXDataParser)"
+                ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");
             foreach (string p in problems.Take(20)) Console.WriteLine($"  {p}");
             if (problems.Count > 0) failures++;
@@ -56,8 +79,44 @@ internal static partial class CrossCheck
     private sealed record Decoded(int Gil, int Ap, int ApOverkill, int PrimaryChance, int SecondaryChance, int StealChance,
         Dictionary<string, (int Id, int Quantity)> Items, Dictionary<string, Elements> ElementSets);
 
-    /// <summary>Writes the changed files as a sparse override over the original data and runs PARSE_ALL_MONSTERS.</summary>
-    private static (Dictionary<int, Decoded> Monsters, List<string> Errors) Decode(IReadOnlyDictionary<string, byte[]> files)
+    /// <summary>"Index 4 [04h] (Offset 0024) - Gear: buki_get #2 [02h] { Yuna [01h], Weapon {...} }" and so on, one line per treasure.</summary>
+    private static IEnumerable<string> CompareTreasure(JsonArray entries, string stdout)
+    {
+        var lines = TreasureLine().Matches(stdout.Replace("\r", "")).ToDictionary(m => int.Parse(m.Groups[1].Value), m => m.Groups[2].Value);
+        foreach (var entry in entries)
+        {
+            int index = (int)entry!["index"]!;
+            var now = entry["now"]!;
+            string expected = now["gil"] is { } gil ? $"Gil: {(int)gil} "
+                : now["keyItem"] is not null ? $"Key Item: {(string?)now["keyItem"]} [{(int)now["id"]!:X4}h]"
+                : now["gear"] is { } gear ? $"Gear: buki_get #{(int)gear} [{(int)gear:X2}h] {{ {(string?)now["for"]} "
+                : $"Item: {(int)now["quantity"]!}x {(string?)now["item"]} [{(int)now["id"]!:X4}h]";
+            if (!lines.TryGetValue(index, out string? actual)) yield return $"treasure {index}: missing from FFXDataParser output";
+            else if (!actual.StartsWith(expected, StringComparison.Ordinal))
+                yield return $"treasure {index}: our spoiler says \"{expected.Trim()}\" but FFXDataParser reads \"{actual}\"";
+            else if (now["type"] is { } type && !actual.Contains($"], {(string?)type}", StringComparison.Ordinal))
+                yield return $"treasure {index}: our spoiler says {(string?)type} but FFXDataParser reads \"{actual}\"";
+        }
+    }
+
+    /// <summary>"Index N [..h] (...) - Price (unused): 100%" followed by "Slot #k: Name" lines.</summary>
+    private static IEnumerable<string> CompareShops(JsonArray entries, string stdout)
+    {
+        var shops = ShopBlock().Matches(stdout.Replace("\r", "")).ToDictionary(
+            m => int.Parse(m.Groups[1].Value),
+            m => Regex.Matches(m.Groups[2].Value, @"^Slot #\d+: (.*)$", RegexOptions.Multiline).Select(s => s.Groups[1].Value.Trim().TrimStart('[').TrimEnd(']')).ToList());
+        foreach (var entry in entries)
+        {
+            int shop = (int)entry!["shop"]!;
+            var ours = ((JsonArray)entry["items"]!).Select(n => (string)n!).ToList();
+            if (!shops.TryGetValue(shop, out var theirs)) yield return $"shop {shop}: missing from FFXDataParser output";
+            else if (!ours.SequenceEqual(theirs))
+                yield return $"shop {shop}: our spoiler lists [{string.Join(", ", ours)}] but FFXDataParser reads [{string.Join(", ", theirs)}]";
+        }
+    }
+
+    /// <summary>Writes the changed files as a sparse override over the original data and runs one parser mode.</summary>
+    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode)
     {
         string root = Directory.CreateTempSubdirectory("ffxr-crosscheck-").FullName;
         string link = Path.Combine(root, "ffx_ps2");
@@ -77,18 +136,20 @@ internal static partial class CrossCheck
                 File.WriteAllBytes(target, bytes);
             }
 
-            var start = new ProcessStartInfo("java", ["-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", "PARSE_ALL_MONSTERS"])
+            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode])
             {
                 WorkingDirectory = ParserDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
             };
             using var process = Process.Start(start)!;
             var stderr = process.StandardError.ReadToEndAsync();
             string stdout = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
             var errors = stderr.Result.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
-            return (Parse(stdout), errors);
+            return (stdout, errors);
         }
         finally
         {
@@ -203,4 +264,6 @@ internal static partial class CrossCheck
     [GeneratedRegex(@"^Bribe Baseline: (\d+)x .*?\[([0-9A-F]{4})h\]", RegexOptions.Multiline)] private static partial Regex BribeLine();
     [GeneratedRegex(@"^Element Affinities: (.*)$", RegexOptions.Multiline)] private static partial Regex ElementLine();
     private static Regex ChanceLine(string section) => new($@"^{section}: Chance=(\d+)/255", RegexOptions.Multiline);
+    [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - (.*)$", RegexOptions.Multiline)] private static partial Regex TreasureLine();
+    [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - Price.*\n((?:Slot #.*\n?)*)", RegexOptions.Multiline)] private static partial Regex ShopBlock();
 }

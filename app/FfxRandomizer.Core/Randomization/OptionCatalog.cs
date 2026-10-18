@@ -61,18 +61,21 @@ public static class OptionCatalog
         ]),
         new("items", "Items & Shops", "Treasure chests, shop stock and customization materials.",
         [
-            Toggle("field", "Treasure and field items", "Items in chests and items characters give you are randomized.", subOptions:
+            Toggle("field", "Treasure and field items",
+                "Chests and pickups give a random item, piece of gear or gil. The Withered Bouquet and Flint in Baaj Temple always stay put, since the story needs them.",
+                implemented: true, subOptions:
             [
-                new("keyitems", "Include key items", "Story items can turn up anywhere"),
+                new("keyitems", "Include key items", "Key items found in chests, like Al Bhed Primers, move to other chests",
+                    "Untested: may move an item the story needs"),
                 new("celestial", "Include Celestial items", "Crests, sigils and Celestial weapons"),
                 new("brotherhood", "Include Brotherhood", "Tidus’s starting sword"),
             ]),
-            Toggle("shops", "Item shops", "Each shop stocks a random selection of items.", subOptions:
+            Toggle("shops", "Item shops", "Each shop stocks a random selection of items.", implemented: true, subOptions:
             [
                 new("shopprices", "Random prices", "Prices change too"),
-                new("spheres", "Always sell spheres", "Every shop keeps basic spheres in stock"),
+                new("spheres", "Always sell spheres", "Every shop keeps Power, Mana, Speed and Ability Spheres in stock"),
             ]),
-            Toggle("custom", "Customization items", "The items needed to add abilities to weapons and armor are randomized."),
+            Toggle("custom", "Customization items", "The items needed to add abilities to weapons and armor are randomized.", implemented: true),
         ]),
         new("gear", "Gear", "Weapon and armor abilities, stats and shops.",
         [
