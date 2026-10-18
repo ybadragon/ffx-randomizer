@@ -353,6 +353,26 @@
         </DataTemplate>
     </mah:MetroWindow.Resources>
 
+    <mah:MetroWindow.RightWindowCommands>
+        <mah:WindowCommands>
+            <Button ToolTip="{Binding UpdateTooltip}" Command="{Binding OpenUpdateCommand}" Cursor="Hand" Opacity="1"
+                    Visibility="{Binding HasUpdate, Converter={StaticResource Show}}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Pill" Background="#E8B04A" CornerRadius="11" Padding="12,3" Margin="0,0,10,0" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding UpdateLabel}" Foreground="#1B2433" FontWeight="SemiBold" FontSize="13" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Pill" Property="Background" Value="#F4C766" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </mah:WindowCommands>
+    </mah:MetroWindow.RightWindowCommands>
+
     <Grid>
         <DockPanel>
             <!-- Bottom bar -->

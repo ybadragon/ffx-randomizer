@@ -7,6 +7,7 @@ using FfxRandomizer.Core.Game;
 using FfxRandomizer.Core.Patching;
 using FfxRandomizer.Core.Randomization;
 using FfxRandomizer.Core.Storage;
+using FfxRandomizer.Core.Updates;
 using Microsoft.Win32;
 
 namespace FfxRandomizer.App.ViewModels;
@@ -46,11 +47,28 @@ public sealed partial class MainViewModel : ObservableObject
         SelectTab(Tabs[0]);
         ConnectGame(_appSettings.GameFolder is { } folder ? GameInstall.FromFolder(folder) : GameInstall.FindSteamInstall());
         RefreshLists();
+        _ = CheckForUpdatesAsync();
     }
 
     private readonly IReadOnlyList<GroupViewModel> _groups;
 
     public string Version { get; } = $"v{AppInfo.Version}";
+
+    /// <summary>A newer release on GitHub, found once at startup; null when up to date or offline.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUpdate), nameof(UpdateLabel), nameof(UpdateTooltip))]
+    private UpdateInfo? _update;
+
+    public bool HasUpdate => Update is not null;
+    public string UpdateLabel => Update is null ? "" : $"Update available: v{Update.Version}";
+    public string UpdateTooltip => Update is null ? "" :
+        $"{Update.Name} is out. Opens the download page; replace your copy of FFX Randomizer with the new exe.";
+
+    private async Task CheckForUpdatesAsync() => Update = await UpdateChecker.CheckAsync(AppInfo.Version);
+
+    [RelayCommand]
+    private void OpenUpdate() =>
+        Process.Start(new ProcessStartInfo(Update?.PageUrl ?? UpdateChecker.ReleasesPage) { UseShellExecute = true });
 
     public ObservableCollection<TabViewModel> Tabs { get; }
     public ObservableCollection<PresetItemViewModel> MyPresets { get; } = [];
