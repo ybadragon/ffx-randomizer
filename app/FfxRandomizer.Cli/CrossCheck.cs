@@ -41,6 +41,19 @@ internal static partial class CrossCheck
                 }
                 if (copy.ContainsKey(KernelFiles.Treasure)) copy[KernelFiles.Treasure][0x14 + 4 * 6 + 1] ^= 1;
                 if (copy.ContainsKey(KernelFiles.ItemShops)) copy[KernelFiles.ItemShops][0x14 + 2] ^= 1;
+                // One changed stat (on an enemy other than m001, so the drop sabotage doesn't hide it) and one battle slot.
+                if (result.Spoiler[EnemyRewardsFeature.Section] is JsonArray changed
+                    && changed.OfType<JsonObject>().FirstOrDefault(e => e["stats"] is not null && (int)e["index"]! > 1) is { } statEntry)
+                {
+                    int index = (int)statEntry["index"]!;
+                    var stats = new MonsterFile(index, copy[MonsterFile.PathFor(index)]).Stats;
+                    stats.Strength ^= 1;
+                }
+                if (copy.Keys.FirstOrDefault(k => k.Contains("/battle/btl/")) is { } battlePath)
+                {
+                    int slot0 = EncounterFiles.Monsters(copy[battlePath])[0];
+                    EncounterFiles.SetMonster(copy[battlePath], 0, slot0 == 1 ? 2 : 1);
+                }
                 files = copy;
             }
 
@@ -67,6 +80,14 @@ internal static partial class CrossCheck
                 problems.AddRange(CompareShops(shops, stdout));
                 checkedAreas.Add($"{shops.Count} shops");
             }
+            if (result.Spoiler[EnemyEncountersFeature.Section] is JsonArray pairs)
+            {
+                var battles = files.Keys.Where(k => k.Contains("/battle/btl/")).Select(k => k.Split('/')[^2]).Order().ToList();
+                var (stdout, errors) = RunParser(files, "PARSE_BATTLE", battles);
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareBattles(original, pairs, battles, stdout));
+                checkedAreas.Add($"{battles.Count} battles");
+            }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");
@@ -77,7 +98,33 @@ internal static partial class CrossCheck
     }
 
     private sealed record Decoded(int Gil, int Ap, int ApOverkill, int PrimaryChance, int SecondaryChance, int StealChance,
-        Dictionary<string, (int Id, int Quantity)> Items, Dictionary<string, Elements> ElementSets);
+        Dictionary<string, (int Id, int Quantity)> Items, Dictionary<string, Elements> ElementSets, Dictionary<string, long> Stats);
+
+    /// <summary>
+    /// "Monster#00: m209 - Larva [10D1h]" lines per battle. Expected slots come from the original battle file with the
+    /// spoiler's replacements applied, so this checks both our writing and the spoiler.
+    /// </summary>
+    private static IEnumerable<string> CompareBattles(VbfArchive original, JsonArray pairs, IReadOnlyList<string> battles, string stdout)
+    {
+        var replacement = pairs.ToDictionary(p => (int)p!["replacedIndex"]!, p => (int)p!["byIndex"]!);
+        var decoded = BattleBlock().Matches(stdout.Replace("\r", "")).ToDictionary(
+            m => m.Groups[1].Value,
+            m => FormationLine().Matches(m.Groups[2].Value).ToDictionary(l => Convert.ToInt32(l.Groups[1].Value, 16), l => int.Parse(l.Groups[2].Value)));
+        foreach (string battle in battles)
+        {
+            if (!decoded.TryGetValue(battle, out var theirs))
+            {
+                yield return $"{battle}: missing from FFXDataParser output";
+                continue;
+            }
+            int[] before = EncounterFiles.Monsters(original.ReadFile(EncounterFiles.PathFor(battle)));
+            var expected = Enumerable.Range(0, before.Length).Where(s => before[s] >= 0)
+                .ToDictionary(s => s, s => replacement.GetValueOrDefault(before[s], before[s]));
+            if (!expected.OrderBy(e => e.Key).SequenceEqual(theirs.OrderBy(e => e.Key)))
+                yield return $"{battle}: we expect [{Slots(expected)}] but FFXDataParser reads [{Slots(theirs)}]";
+        }
+        static string Slots(Dictionary<int, int> slots) => string.Join(", ", slots.OrderBy(s => s.Key).Select(s => $"#{s.Key}=m{s.Value:D3}"));
+    }
 
     /// <summary>"Index 4 [04h] (Offset 0024) - Gear: buki_get #2 [02h] { Yuna [01h], Weapon {...} }" and so on, one line per treasure.</summary>
     private static IEnumerable<string> CompareTreasure(JsonArray entries, string stdout)
@@ -116,7 +163,7 @@ internal static partial class CrossCheck
     }
 
     /// <summary>Writes the changed files as a sparse override over the original data and runs one parser mode.</summary>
-    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode)
+    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode, params IEnumerable<string> arguments)
     {
         string root = Directory.CreateTempSubdirectory("ffxr-crosscheck-").FullName;
         string link = Path.Combine(root, "ffx_ps2");
@@ -136,7 +183,7 @@ internal static partial class CrossCheck
                 File.WriteAllBytes(target, bytes);
             }
 
-            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode])
+            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode, .. arguments])
             {
                 WorkingDirectory = ParserDir,
                 RedirectStandardOutput = true,
@@ -192,8 +239,19 @@ internal static partial class CrossCheck
                     elements[set.Groups[1].Value] = set.Groups[2].Value.Split(", ", StringSplitOptions.RemoveEmptyEntries)
                         .Select(n => n == "Thunder" ? Elements.Lightning : Enum.Parse<Elements>(n)).Aggregate(Elements.None, (a, b) => a | b);
 
+            var stats = new Dictionary<string, long>();
+            // Only the stat lines: the AI script printed above them mentions HP too.
+            string statText = text.IndexOf("- Monster Stats -", StringComparison.Ordinal) is var at and >= 0 ? text[at..] : "";
+            foreach (var (name, key) in new[]
+                     {
+                         ("hp", "HP"), ("mp", "MP"), ("overkill", "Overkill"), ("strength", "STR"), ("defense", "DEF"), ("magic", "MAG"),
+                         ("magicDefense", "MDF"), ("agility", "AGI"), ("luck", "LCK"), ("evasion", "EVA"), ("accuracy", "ACC"),
+                     })
+                if (Regex.Match(statText, $@"(?:^| ){key}=(\d+)", RegexOptions.Multiline) is { Success: true } m) stats[name] = long.Parse(m.Groups[1].Value);
+            stats["armored"] = Regex.IsMatch(statText, "^Armored$", RegexOptions.Multiline) ? 1 : 0;
+
             monsters[index] = new Decoded(Int(GilLine()), Int(ApLine()), Int(ApLine(), 2),
-                Int(ChanceLine("Primary Item Drop")), Int(ChanceLine("Secondary Item Drop")), Int(ChanceLine("Steal Item")), items, elements);
+                Int(ChanceLine("Primary Item Drop")), Int(ChanceLine("Secondary Item Drop")), Int(ChanceLine("Steal Item")), items, elements, stats);
         }
         return monsters;
     }
@@ -212,11 +270,21 @@ internal static partial class CrossCheck
         IEnumerable<string> Check(string what, int ours, int theirs) =>
             ours == theirs ? [] : [$"{who}: {what} is {ours} in our spoiler but {theirs} according to FFXDataParser"];
 
+        // Gil and AP are set by drops, and also by encounter stat swaps and evened-out enemy stats.
+        if (entry["gil"] is JsonObject gil) foreach (string p in Check("gil", (int)gil["to"]!, d.Gil)) yield return p;
+        if (entry["ap"] is JsonObject ap) foreach (string p in Check("AP", (int)ap["to"]!, d.Ap)) yield return p;
+        if (entry["apOverkill"] is JsonObject apOverkill) foreach (string p in Check("overkill AP", (int)apOverkill["to"]!, d.ApOverkill)) yield return p;
+        if (entry["stats"] is JsonObject stats)
+        {
+            foreach (var (name, change) in stats)
+            {
+                long ours = name == "armored" ? ((bool)change!["to"]! ? 1 : 0) : (long)change!["to"]!;
+                if (!d.Stats.TryGetValue(name, out long theirs)) yield return $"{who}: {name} missing from FFXDataParser output";
+                else if (ours != theirs) yield return $"{who}: {name} is {ours} in our spoiler but {theirs} according to FFXDataParser";
+            }
+        }
         if (entry["drops"] is JsonObject drops)
         {
-            foreach (string p in Check("gil", (int)entry["gil"]!["to"]!, d.Gil)) yield return p;
-            foreach (string p in Check("AP", (int)entry["ap"]!["to"]!, d.Ap)) yield return p;
-            foreach (string p in Check("overkill AP", (int)entry["apOverkill"]!["to"]!, d.ApOverkill)) yield return p;
             int primaryChance = (int)drops["chance"]!["primary"]!, secondaryChance = (int)drops["chance"]!["secondary"]!;
             foreach (string p in Check("primary drop chance", primaryChance, d.PrimaryChance)) yield return p;
             foreach (string p in Check("secondary drop chance", secondaryChance, d.SecondaryChance)) yield return p;
@@ -257,6 +325,9 @@ internal static partial class CrossCheck
 
     [GeneratedRegex(@"^--- ffx_ps2/ffx/master/jppc/battle/mon/_m(\d{3})/m\d{3}\.bin ---\n(.*?)(?=^--- |\z)", RegexOptions.Multiline | RegexOptions.Singleline)]
     private static partial Regex MonsterBlock();
+    [GeneratedRegex(@"^--- ffx_ps2/ffx/master/jppc/battle/btl/(\w+)/\w+\.bin ---\n(.*?)(?=^--- ffx_ps2|\z)", RegexOptions.Multiline | RegexOptions.Singleline)]
+    private static partial Regex BattleBlock();
+    [GeneratedRegex(@"^Monster#([0-9A-F]{2}): m(\d{3})", RegexOptions.Multiline)] private static partial Regex FormationLine();
     [GeneratedRegex(@"^Gil=(\d+)", RegexOptions.Multiline)] private static partial Regex GilLine();
     [GeneratedRegex(@"^AP Normal=(\d+) Overkill=(\d+)", RegexOptions.Multiline)] private static partial Regex ApLine();
     [GeneratedRegex(@"[ ]+(COMMON|RARE) Normal (\d+)x .*?\[([0-9A-F]{4})h\]; Overkill (\d+)x .*?\[([0-9A-F]{4})h\]")] private static partial Regex DropLine();

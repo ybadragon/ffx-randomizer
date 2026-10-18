@@ -54,10 +54,16 @@ public static class OptionCatalog
             Toggle("elements", "Elemental affinities",
                 "Enemy weaknesses, resistances, immunities and absorptions for Fire, Ice, Thunder, Water and Holy are re-rolled.",
                 implemented: true),
-            Pick("estats", "Enemy stats", "How strong individual enemies are.", null,
-                new("orig", "Original"), new("shuffle", "Shuffle"), new("shufflenorm", "Shuffle, even out defenses"), new("random", "Randomize")),
-            Toggle("encounters", "Random encounters", "Which enemies you meet in each area.",
-                warning: "One Thunder Plains battle has been reported to crash the game. Turning on No Encounters gets you past it."),
+            Pick("estats", "Enemy stats",
+                "How strong individual enemies are. Shuffle hands each enemy another enemy’s defenses; Shuffle, even out defenses also adjusts HP, gil and AP to match; Randomize re-rolls stats around their originals.",
+                null,
+                new("orig", "Original"), new("shuffle", "Shuffle"), new("shufflenorm", "Shuffle, even out defenses"), new("random", "Randomize"))
+                with { Implemented = true },
+            Pick("encounters", "Random encounters",
+                "Which enemies you meet in each area. Every fiend is swapped with another everywhere it appears. The newcomers can keep their own stats, take the stats of the enemy they replace, or land in between.",
+                "One Thunder Plains battle has been reported to crash the game. Turning on No Encounters gets you past it.",
+                new("orig", "Original"), new("random", "Shuffle, own stats"), new("swap", "Shuffle, take replaced stats"), new("scale", "Shuffle, scale stats"))
+                with { Implemented = true },
         ]),
         new("items", "Items & Shops", "Treasure chests, shop stock and customization materials.",
         [
