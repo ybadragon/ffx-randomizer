@@ -39,6 +39,7 @@ public static class RandomizerEngine
         new AeonStatsFeature(),
         new AeonGrowthFeature(),
         new AeonItemsFeature(),
+        new SphereGridFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

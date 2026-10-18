@@ -54,6 +54,7 @@ internal static partial class CrossCheck
                 if (copy.ContainsKey(usSave)) copy[usSave][0x14 + PlySave.Wakka * 148 + PlySave.BaseMag] ^= 1;
                 if (copy.ContainsKey(usRom)) copy[usRom][0x14 + (PlyRom.FirstAeon + 4) * 44 + PlyRom.Coefficients + 3] ^= 1;
                 if (copy.ContainsKey(AeonFiles.SumGrow)) copy[AeonFiles.SumGrow][0x14 + 8 * 20 + 4] ^= 1;
+                if (copy.TryGetValue(SphereGridFile.All[1].ContentsPath, out byte[]? standard)) standard[SphereGridFile.ContentsHeader] ^= 1;
                 files = copy;
             }
 
@@ -105,6 +106,7 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareGearPrices(prices, stdout));
                 checkedAreas.Add($"{prices.Count} ability prices");
+            }
             var party = (result.Spoiler[PartyStatsFeature.Section] as JsonArray)?.Where(e => e!["stats"] is not null || e!["overdriveMode"] is not null).ToList() ?? [];
             var growth = (result.Spoiler[AeonStatsFeature.Section] as JsonArray)?.Where(e => e!["growth"] is not null).ToList() ?? [];
             bool poison = result.Spoiler["rules"] is JsonArray;
@@ -121,6 +123,11 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareAeonItems(aeonItems, stdout));
                 checkedAreas.Add($"{aeonItems.Count} aeon items");
+            }
+            if (result.Spoiler[SphereGridFeature.Section] is JsonArray grids)
+            {
+                problems.AddRange(CompareSphereGrids(grids, result.Files, files));
+                checkedAreas.Add($"{grids.Count} sphere grids");
             }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
@@ -269,6 +276,9 @@ internal static partial class CrossCheck
             int ours = (int)entries[i]!["to"]!;
             if (!prices.TryGetValue(i, out int theirs)) yield return $"{(string?)entries[i]!["ability"]}: price missing from FFXDataParser output";
             else if (ours != theirs) yield return $"{(string?)entries[i]!["ability"]}: price {ours} in our spoiler but {theirs} according to FFXDataParser";
+        }
+    }
+
     /// <summary>The "Index N ..." blocks of one file's section in a parser listing, by index.</summary>
     private static Dictionary<int, string> FileBlocks(string stdout, string fileName)
     {
