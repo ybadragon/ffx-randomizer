@@ -42,6 +42,23 @@ try
             if (outcome.Entry.SpoilerPath is not null) Console.WriteLine($"Spoiler log: {outcome.Entry.SpoilerPath}");
             return 0;
 
+        case "crosscheck":
+        {
+            // ffxr crosscheck [--seeds N] <option-id>...   (randomizes in memory only; the game isn't touched)
+            var checkSettings = RandomizerSettings.Defaults();
+            int seedCount = 3;
+            bool sabotage = false;
+            for (int i = 1; i < args.Length; i++)
+            {
+                if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
+                else if (args[i] == "--sabotage") sabotage = true;
+                else checkSettings.Toggles[args[i]] = true;
+            }
+            var original = service.Patcher.OpenOriginal();
+            var seeds = Enumerable.Range(0, seedCount).Select(i => new Seed($"crosscheck-{i}")).ToList();
+            return CrossCheck.Run(original, FfxRandomizer.Core.GameData.GameText.Load(original), checkSettings, seeds, sabotage);
+        }
+
         case "restore":
             Console.WriteLine(service.Patcher.Restore() ? "Original game restored." : "The game wasn't randomized; nothing to restore.");
             return 0;

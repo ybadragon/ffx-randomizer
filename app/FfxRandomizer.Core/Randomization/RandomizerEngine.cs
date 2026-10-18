@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using FfxRandomizer.Core.GameData;
 using FfxRandomizer.Core.Randomization.Features;
 using FfxRandomizer.Core.Vbf;
 
@@ -8,7 +9,14 @@ public sealed record RunResult(
     Seed Seed,
     RandomizerSettings Settings,
     IReadOnlyDictionary<string, byte[]> Files,
-    JsonObject Spoiler);
+    JsonObject Spoiler,
+    IReadOnlyList<string> Problems);
+
+public sealed class ValidationFailedException(IReadOnlyList<string> problems)
+    : Exception($"The randomizer produced something that failed its checks, so nothing was written to the game. First problem: {problems[0]}")
+{
+    public IReadOnlyList<string> Problems { get; } = problems;
+}
 
 public static class RandomizerEngine
 {
@@ -16,15 +24,16 @@ public static class RandomizerEngine
     public static IReadOnlyList<IRandomizerFeature> Features { get; } =
     [
         new TidusHpFeature(),
+        new EnemyRewardsFeature(),
+        new EnemyElementsFeature(),
     ];
 
-    public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed)
+    public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)
     {
-        var context = new RandomizerContext(original, settings, seed);
-        foreach (var feature in Features)
-        {
-            if (feature.IsEnabled(settings)) feature.Apply(context);
-        }
-        return new RunResult(seed, settings.Clone(), context.ChangedFiles, context.Spoiler);
+        var context = new RandomizerContext(original, settings, seed, names);
+        var enabled = Features.Where(f => f.IsEnabled(settings)).ToList();
+        foreach (var feature in enabled) feature.Apply(context);
+        var problems = enabled.SelectMany(f => f.Validate(context)).Distinct().ToList();
+        return new RunResult(seed, settings.Clone(), context.ChangedFiles, context.Spoiler, problems);
     }
 }

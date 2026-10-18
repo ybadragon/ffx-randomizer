@@ -67,7 +67,7 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:SubOptionViewModel}">
                                     <Border BorderBrush="{StaticResource Divider}" BorderThickness="0,1,0,0" Padding="0,8">
-                                        <Grid>
+                                        <Grid IsEnabled="{Binding Implemented}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="250" />
                                                 <ColumnDefinition Width="*" />
@@ -77,10 +77,15 @@
                                                 <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Foreground="{StaticResource Text}" />
                                             </CheckBox>
                                             <TextBlock Grid.Column="1" Text="{Binding Description}" Style="{StaticResource Small}" VerticalAlignment="Center" />
-                                            <Border Grid.Column="2" Style="{StaticResource WarnChip}" CornerRadius="4"
-                                                    Visibility="{Binding HasWarning, Converter={StaticResource Show}}">
-                                                <TextBlock Text="{Binding Warning}" />
-                                            </Border>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                <Border Style="{StaticResource WarnChip}" CornerRadius="4"
+                                                        Visibility="{Binding HasWarning, Converter={StaticResource Show}}">
+                                                    <TextBlock Text="{Binding Warning}" />
+                                                </Border>
+                                                <Border Style="{StaticResource Chip}" Visibility="{Binding ComingSoon, Converter={StaticResource Show}}">
+                                                    <TextBlock Text="Coming soon" />
+                                                </Border>
+                                            </StackPanel>
                                         </Grid>
                                     </Border>
                                 </DataTemplate>

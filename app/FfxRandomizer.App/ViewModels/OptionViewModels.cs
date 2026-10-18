@@ -24,6 +24,8 @@ public sealed partial class SubOptionViewModel(SubOption option, Action changed)
     public string Description => option.Description;
     public string? Warning => option.Warning;
     public bool HasWarning => option.Warning is not null;
+    public bool Implemented => option.Implemented;
+    public bool ComingSoon => !option.Implemented;
 
     [ObservableProperty] private bool _isOn;
 

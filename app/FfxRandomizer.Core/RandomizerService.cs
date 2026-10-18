@@ -10,7 +10,7 @@ public enum RunStep { CheckingGame, ReadingGameData, Randomizing, WritingAndChec
 public sealed record RunOutcome(HistoryEntry Entry, RunResult Result);
 
 /// <summary>One full run: randomize from the original data, write it into the game, then record it in history.</summary>
-public sealed class RandomizerService(GameInstall game, AppPaths paths)
+public sealed class RandomizerService(GameInstall game, AppPaths paths, Func<Vbf.VbfArchive, GameData.IGameNames>? names = null)
 {
     public GameInstall Game { get; } = game;
     public PatchManager Patcher { get; } = new(game.DataArchivePath, paths);
@@ -26,7 +26,8 @@ public sealed class RandomizerService(GameInstall game, AppPaths paths)
         var original = Patcher.OpenOriginal();
 
         progress?.Report(RunStep.Randomizing);
-        var result = RandomizerEngine.Run(original, settings, seed);
+        var result = RandomizerEngine.Run(original, settings, seed, (names ?? (a => GameData.GameText.Load(a)))(original));
+        if (result.Problems.Count > 0) throw new ValidationFailedException(result.Problems);
         if (result.Files.Count == 0)
             throw new InvalidOperationException("None of the selected options change the game yet. Turn on an option that's available.");
 

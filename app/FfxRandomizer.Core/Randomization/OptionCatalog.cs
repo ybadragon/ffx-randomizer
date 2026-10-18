@@ -2,7 +2,7 @@ namespace FfxRandomizer.Core.Randomization;
 
 public sealed record Choice(string Id, string Label);
 
-public sealed record SubOption(string Id, string Label, string Description, string? Warning = null);
+public sealed record SubOption(string Id, string Label, string Description, string? Warning = null, bool Implemented = true);
 
 /// <summary>
 /// One feature box in the options window. A box with <see cref="HasToggle"/> is switched on by its own id;
@@ -44,15 +44,16 @@ public static class OptionCatalog
         ]),
         new("enemies", "Enemies", "Who you fight, how tough they are and what they leave behind.",
         [
-            Toggle("rewards", "Enemy rewards", "What enemies give you after battle.", subOptions:
+            Toggle("rewards", "Enemy rewards", "What enemies give you after battle.", implemented: true, subOptions:
             [
-                new("drops", "Item drops", "Normal and rare drops"),
-                new("steals", "Steals", "What Steal and Mug can take"),
+                new("drops", "Item drops", "Gil, AP and normal, rare and overkill drops"),
+                new("steals", "Steals", "What Steal and Mug can take (always succeeds)"),
                 new("bribes", "Bribes", "What Bribe gets you"),
-                new("geardrops", "Equipment drops", "Weapons and armor enemies drop"),
+                new("geardrops", "Equipment drops", "Weapons and armor enemies drop", Implemented: false),
             ]),
             Toggle("elements", "Elemental affinities",
-                "Enemy weaknesses, resistances and immunities to Fire, Ice, Thunder, Water and Holy are shuffled."),
+                "Enemy weaknesses, resistances, immunities and absorptions for Fire, Ice, Thunder, Water and Holy are re-rolled.",
+                implemented: true),
             Pick("estats", "Enemy stats", "How strong individual enemies are.", null,
                 new("orig", "Original"), new("shuffle", "Shuffle"), new("shufflenorm", "Shuffle, even out defenses"), new("random", "Randomize")),
             Toggle("encounters", "Random encounters", "Which enemies you meet in each area.",

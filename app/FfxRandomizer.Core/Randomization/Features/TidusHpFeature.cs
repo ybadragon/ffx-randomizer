@@ -7,8 +7,6 @@ public sealed class TidusHpFeature : IRandomizerFeature
 {
     public const uint Hp = 9999;
 
-    public string Name => "Tidus starts with 9999 HP";
-
     public bool IsEnabled(RandomizerSettings settings) => settings.IsOn("tidus");
 
     public void Apply(RandomizerContext context)
@@ -23,5 +21,14 @@ public sealed class TidusHpFeature : IRandomizerFeature
             table.WriteUInt32(PlySave.Tidus, PlySave.MaxHp, Hp);
         }
         context.Spoil("party", new { Character = "Tidus", Hp = new { From = before, To = Hp } });
+    }
+
+    public IEnumerable<string> Validate(RandomizerContext context)
+    {
+        foreach (string language in GamePaths.LanguageFolders)
+        {
+            var table = new KernelTable(context.ChangedFiles[GamePaths.LanguageKernel(language, PlySave.FileName)]);
+            if (table.ReadUInt32(PlySave.Tidus, PlySave.MaxHp) != Hp) yield return $"Tidus HP wasn't set in {language}.";
+        }
     }
 }

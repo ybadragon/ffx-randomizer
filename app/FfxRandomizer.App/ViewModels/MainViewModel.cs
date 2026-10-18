@@ -383,6 +383,10 @@ public sealed partial class MainViewModel : ObservableObject
         {
             ShowFailure(e.Message, e);
         }
+        catch (ValidationFailedException e)
+        {
+            ShowFailure(e.Message, new Exception(string.Join(Environment.NewLine, e.Problems), e));
+        }
         catch (Exception e) when (e is InvalidOperationException or InvalidDataException or IOException or UnauthorizedAccessException)
         {
             ShowFailure(e.Message, e);

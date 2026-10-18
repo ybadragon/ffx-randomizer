@@ -73,7 +73,7 @@ public class RandomizationTests
         var settings = RandomizerSettings.Defaults();
         settings.Toggles["tidus"] = true;
         var spoiler = new System.Text.Json.Nodes.JsonObject { ["party"] = new System.Text.Json.Nodes.JsonArray(1, 2) };
-        var run = new RunResult(new Seed("RACE-2026"), settings, new Dictionary<string, byte[]>(), spoiler);
+        var run = new RunResult(new Seed("RACE-2026"), settings, new Dictionary<string, byte[]>(), spoiler, []);
         var entry = new HistoryEntry { Seed = "RACE-2026", PresetName = "Race rules" };
 
         string path = SpoilerLog.Write(new AppPaths(dir.Path), run, entry);

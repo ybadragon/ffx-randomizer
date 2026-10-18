@@ -52,6 +52,22 @@ public sealed class Rng
     /// <summary>Uniform double in [0, 1).</summary>
     public double NextDouble() => (NextUInt64() >> 11) * (1.0 / (1UL << 53));
 
+    /// <summary>
+    /// A normally distributed integer, redrawn until it lands in [min, max]; the same shape as FFXRando's normal&lt;T&gt;.
+    /// </summary>
+    public int Normal(double mean, double standardDeviation, int min, int max)
+    {
+        if (standardDeviation <= 0) return (int)Math.Clamp(Math.Round(mean), min, max);
+        for (int attempt = 0; attempt < 1000; attempt++)
+        {
+            // Box-Muller; 1 - NextDouble() keeps the logarithm's argument above zero.
+            double z = Math.Sqrt(-2.0 * Math.Log(1.0 - NextDouble())) * Math.Cos(2.0 * Math.PI * NextDouble());
+            int value = (int)Math.Round(mean + standardDeviation * z);
+            if (value >= min && value <= max) return value;
+        }
+        return (int)Math.Clamp(Math.Round(mean), min, max);
+    }
+
     public T Pick<T>(IReadOnlyList<T> items) => items[Next(0, items.Count - 1)];
 
     public void Shuffle<T>(IList<T> items)

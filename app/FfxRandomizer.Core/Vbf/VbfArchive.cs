@@ -98,12 +98,19 @@ public sealed class VbfArchive
 
     public long SizeOf(int index) => (long)_sizes[index];
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte[]> _cache = new();
+    private const int CacheLimit = 1 << 20;
+
+    /// <summary>Returns a fresh copy of a file's contents; small files are cached after the first read.</summary>
     public byte[] ReadFile(string name)
     {
         int index = IndexOf(name);
         if (index < 0) throw new FileNotFoundException($"{name} is not in {System.IO.Path.GetFileName(Path)}");
+        if (_cache.TryGetValue(index, out byte[]? cached)) return (byte[])cached.Clone();
         using var stream = OpenRead(Path);
-        return ReadFile(stream, index);
+        byte[] bytes = ReadFile(stream, index);
+        if (bytes.Length <= CacheLimit) _cache[index] = (byte[])bytes.Clone();
+        return bytes;
     }
 
     public byte[] ReadFile(Stream stream, int index)
