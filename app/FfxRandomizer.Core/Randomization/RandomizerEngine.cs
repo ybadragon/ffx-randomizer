@@ -33,6 +33,12 @@ public static class RandomizerEngine
         new WeaponStatsFeature(),
         new GearShopsFeature(),
         new EnemyGearDropsFeature(),
+        new PartyStatsFeature(),
+        new OverdriveModeFeature(),
+        new DeadlyPoisonFeature(),
+        new AeonStatsFeature(),
+        new AeonGrowthFeature(),
+        new AeonItemsFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

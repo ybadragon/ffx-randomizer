@@ -16,11 +16,17 @@ public sealed class TidusHpFeature : IRandomizerFeature
         {
             var table = new KernelTable(context.Edit(GamePaths.LanguageKernel(language, PlySave.FileName)));
             before = table.ReadUInt32(PlySave.Tidus, PlySave.MaxHp);
-            table.WriteUInt32(PlySave.Tidus, PlySave.BaseHp, Hp);
-            table.WriteUInt32(PlySave.Tidus, PlySave.CurrentHp, Hp);
-            table.WriteUInt32(PlySave.Tidus, PlySave.MaxHp, Hp);
+            Write(table);
         }
-        context.Spoil("party", new { Character = "Tidus", Hp = new { From = before, To = Hp } });
+        PartyStatsFeature.SpoilerEntry(context, PlySave.Tidus)["hp"] = RandomizerContext.ToNode(new { From = before, To = Hp });
+    }
+
+    /// <summary>Sets Tidus's base, current and max HP. Party stats call this again so the test mod still wins.</summary>
+    internal static void Write(KernelTable table)
+    {
+        table.WriteUInt32(PlySave.Tidus, PlySave.BaseHp, Hp);
+        table.WriteUInt32(PlySave.Tidus, PlySave.CurrentHp, Hp);
+        table.WriteUInt32(PlySave.Tidus, PlySave.MaxHp, Hp);
     }
 
     public IEnumerable<string> Validate(RandomizerContext context)
