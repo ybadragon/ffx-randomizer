@@ -29,6 +29,7 @@ public static class RandomizerEngine
         new TreasureFeature(),
         new ItemShopsFeature(),
         new CustomizationFeature(),
+        new BlitzballStatsFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

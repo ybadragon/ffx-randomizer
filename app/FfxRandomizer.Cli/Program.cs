@@ -44,7 +44,7 @@ try
 
         case "crosscheck":
         {
-            // ffxr crosscheck [--seeds N] <option-id>...   (randomizes in memory only; the game isn't touched)
+            // ffxr crosscheck [--seeds N] <option-id>|<choice-id>=<choice>...   (randomizes in memory only; the game isn't touched)
             var checkSettings = RandomizerSettings.Defaults();
             int seedCount = 3;
             bool sabotage = false;
@@ -52,6 +52,7 @@ try
             {
                 if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
                 else if (args[i] == "--sabotage") sabotage = true;
+                else if (args[i].Split('=', 2) is [var choiceId, var choice]) checkSettings.Choices[choiceId] = choice;
                 else checkSettings.Toggles[args[i]] = true;
             }
             var original = service.Patcher.OpenOriginal();

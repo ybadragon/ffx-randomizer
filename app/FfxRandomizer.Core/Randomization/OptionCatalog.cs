@@ -108,6 +108,15 @@ public static class OptionCatalog
                 new("none", "Unchanged"), new("up", "Upgrade nodes"), new("down", "Downgrade nodes")),
             Toggle("locks", "Remove lock nodes", "Every path on the grid is open from the start, no Key Spheres needed."),
         ]),
+        new("blitzball", "Blitzball", "The players you can scout and sign for the Besaid Aurochs.",
+        [
+            new("blitz", "Blitzball player stats",
+                "How every Blitzball player’s HP, Speed, Endurance, Attack, Pass, Block, Shot and Catch grow with their level.",
+                false,
+                [new("orig", "Original"), new("shuffle", "Shuffle between players"), new("random", "Randomize")],
+                [new("blitzstars", "Include Tidus and Wakka", "Their stats change too. Off keeps the Aurochs’ two stars as they are")],
+                Implemented: true),
+        ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
         [
             Toggle("sane", "Keep things sane", "Keeps random values within sensible limits so the game stays playable.", badge: "Recommended", implemented: true),

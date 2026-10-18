@@ -6,6 +6,9 @@ public interface IGameNames
     string? ItemName(int itemId);
     string? MonsterName(int monsterIndex);
     string? AutoAbilityName(int abilityId);
+
+    /// <summary>Name of Blitzball player 0-59 (0 is Tidus).</summary>
+    string? BlitzballPlayerName(int player) => null;
 }
 
 public static class GameNamesExtensions
@@ -15,6 +18,8 @@ public static class GameNamesExtensions
     public static string Monster(this IGameNames names, int index) => names.MonsterName(index) ?? $"Monster m{index:D3}";
 
     public static string Ability(this IGameNames names, int abilityId) => names.AutoAbilityName(abilityId) ?? $"Ability 0x{abilityId:X4}";
+
+    public static string BlitzballPlayer(this IGameNames names, int player) => names.BlitzballPlayerName(player) ?? $"Player {player}";
 }
 
 public sealed class NoGameNames : IGameNames
