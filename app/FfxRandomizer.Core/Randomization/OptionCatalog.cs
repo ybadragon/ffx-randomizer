@@ -103,7 +103,7 @@ public static class OptionCatalog
         ]),
         new("aeons", "Aeons", "Aeon stats and the items that power them up.",
         [
-            Pick("abase", "Aeon base stats", "The lowest stats each aeon can have at each point in the story.", null,
+            Pick("abase", "Aeon base stats", "The lowest stats each aeon can have, which rise as you fight more battles.", null,
                 new("orig", "Original"), new("shuffle", "Shuffle between aeons"), new("random", "Randomize")) with { Implemented = true },
             Pick("ascale", "Aeon stat growth", "How aeon stats grow with Yuna’s.", null,
                 new("orig", "Original"), new("shuffle", "Shuffle between aeons"), new("random", "Randomize")) with { Implemented = true },

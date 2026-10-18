@@ -44,6 +44,7 @@ public sealed partial class GroupViewModel : ObservableObject
         _changed = changed;
         Choices = group.Choices.Select(c => new ChoiceViewModel(c, this)).ToList();
         SubOptions = group.SubOptions.Select(s => new SubOptionViewModel(s, Changed)).ToList();
+        SaveImpact = SaveImpacts.For(group.Id);
     }
 
     public OptionGroup Group { get; }
@@ -55,6 +56,12 @@ public sealed partial class GroupViewModel : ObservableObject
     public string? Badge => Group.Implemented ? Group.Badge : "Coming soon";
     public bool HasBadge => Badge is not null;
     public bool BadgeIsComingSoon => !Group.Implemented;
+
+    /// <summary>Whether this option reaches a game already in progress; null for options that don't change the game.</summary>
+    public SaveImpactInfo? SaveImpact { get; }
+    public bool ShowsOnExistingSaves => Group.Implemented && SaveImpact?.Impact == Core.Randomization.SaveImpact.ExistingSaves;
+    public bool ShowsPartly => Group.Implemented && SaveImpact?.Impact == Core.Randomization.SaveImpact.Partly;
+    public bool ShowsNewGameOnly => Group.Implemented && SaveImpact?.Impact == Core.Randomization.SaveImpact.NewGameOnly;
     public IReadOnlyList<ChoiceViewModel> Choices { get; }
     public IReadOnlyList<SubOptionViewModel> SubOptions { get; }
 

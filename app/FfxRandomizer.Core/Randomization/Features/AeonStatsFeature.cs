@@ -5,9 +5,9 @@ using FfxRandomizer.Core.GameData;
 namespace FfxRandomizer.Core.Randomization.Features;
 
 /// <summary>
-/// Aeon base stats: the least each aeon's stats can be at each of the 20 story tiers in sum_assure.bin.
+/// Aeon base stats: the least each aeon's stats can be at each of the 20 tiers in sum_assure.bin (the tiers follow the battle count: 60 battles, then every 30 up to 600).
 /// Randomize scales each aeon's HP, MP, Strength, Defense, Magic, Magic Defense, Agility and Accuracy by its own
-/// factor (spread like FFXRando's normal(value, value / 2)) across every tier, so aeons still grow through the story.
+/// factor (spread like FFXRando's normal(value, value / 2)) across every tier, so aeons still grow as the battle count rises.
 /// Shuffle swaps whole aeons. FFXRando read this table in 120-byte steps, so it changed only Valefor and shuffled
 /// whole tiers instead of aeons; this applies what the option describes.
 /// </summary>
