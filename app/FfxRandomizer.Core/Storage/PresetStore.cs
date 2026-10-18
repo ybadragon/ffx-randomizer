@@ -25,9 +25,9 @@ public sealed class PresetStore(AppPaths paths)
         BuiltIn("Light shuffle", ["sane", "spoiler", "rewards", "drops", "steals", "field", "shops", "spheres"]),
         BuiltIn("Classic randomizer", ["sane", "spoiler", "rewards", "drops", "steals", "bribes", "geardrops", "field", "shops", "spheres", "gearab", "wshops", "custom"],
             ("gridmode", "shuffle")),
-        BuiltIn("Chaos", ["sane", "spoiler", "rewards", "drops", "steals", "bribes", "geardrops", "elements", "encounters", "field", "keyitems",
+        BuiltIn("Chaos", ["sane", "spoiler", "rewards", "drops", "steals", "bribes", "geardrops", "elements", "field", "keyitems",
                 "shops", "shopprices", "gearab", "wshops", "wprices", "wstats", "crit", "atk", "custom", "aitems", "od", "locks"],
-            ("pstats", "random"), ("estats", "random"), ("abase", "random"), ("ascale", "random"), ("gridmode", "random")),
+            ("pstats", "random"), ("estats", "random"), ("encounters", "random"), ("abase", "random"), ("ascale", "random"), ("gridmode", "random")),
     ];
 
     public IReadOnlyList<Preset> Mine => _mine ??= JsonFile.Load(paths.PresetsPath, () => new List<Preset>());

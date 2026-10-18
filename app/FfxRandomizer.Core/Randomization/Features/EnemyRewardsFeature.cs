@@ -123,7 +123,7 @@ public sealed class EnemyRewardsFeature : IRandomizerFeature
 /// <summary>Checks shared by the enemy features.</summary>
 internal static class EnemyChecks
 {
-    /// <summary>Changed monster files keep their size, and only the loot block and element bytes may differ.</summary>
+    /// <summary>Changed monster files keep their size, and only the loot block, stat bytes and element bytes may differ.</summary>
     public static IEnumerable<string> Integrity(RandomizerContext context)
     {
         foreach (int index in MonsterFile.AllIndices(context.Original))
@@ -141,9 +141,10 @@ internal static class EnemyChecks
                 if (changed[i] == original.Bytes[i]) continue;
                 bool inLoot = original.HasLoot && i >= original.LootOffset && i < original.LootOffset + MonsterFile.LootLength;
                 bool inElements = original.HasStats && i >= original.StatsOffset + MonsterStats.AbsorbOffset && i <= original.StatsOffset + MonsterStats.WeaknessOffset;
-                if (!inLoot && !inElements)
+                bool inStats = original.HasStats && i >= original.StatsOffset + MonsterStats.FirstStatOffset && i <= original.StatsOffset + MonsterStats.LastStatOffset;
+                if (!inLoot && !inElements && !inStats)
                 {
-                    yield return $"m{index:D3}: byte 0x{i:X} changed outside the loot and element data.";
+                    yield return $"m{index:D3}: byte 0x{i:X} changed outside the loot, stat and element data.";
                     break;
                 }
             }

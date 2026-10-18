@@ -122,9 +122,36 @@ public readonly struct MonsterStats(Memory<byte> block)
     public const int AbsorbOffset = 0x2B, ImmuneOffset = 0x2C, ResistOffset = 0x2D, WeaknessOffset = 0x2E;
     public const byte ElementMask = 0x1F;
 
+    /// <summary>HP through accuracy, plus the flag byte holding Armored: the bytes the stat features may change.</summary>
+    public const int FirstStatOffset = 0x14, LastStatOffset = 0x28;
+    public const int FlagsOffset = 0x28;
+    public const byte ArmoredFlag = 0x01;
+
     private Span<byte> B => block.Span;
 
-    public uint Hp => BinaryPrimitives.ReadUInt32LittleEndian(B[0x14..]);
+    public uint Hp { get => U32(0x14); set => U32(0x14, value); }
+    public uint Mp { get => U32(0x18); set => U32(0x18, value); }
+    public uint OverkillThreshold { get => U32(0x1C); set => U32(0x1C, value); }
+    public byte Strength { get => B[0x20]; set => B[0x20] = value; }
+    public byte Defense { get => B[0x21]; set => B[0x21] = value; }
+    public byte Magic { get => B[0x22]; set => B[0x22] = value; }
+    public byte MagicDefense { get => B[0x23]; set => B[0x23] = value; }
+    public byte Agility { get => B[0x24]; set => B[0x24] = value; }
+    public byte Luck { get => B[0x25]; set => B[0x25] = value; }
+    public byte Evasion { get => B[0x26]; set => B[0x26] = value; }
+    public byte Accuracy { get => B[0x27]; set => B[0x27] = value; }
+
+    public bool Armored
+    {
+        get => (B[FlagsOffset] & ArmoredFlag) != 0;
+        set => B[FlagsOffset] = (byte)(value ? B[FlagsOffset] | ArmoredFlag : B[FlagsOffset] & ~ArmoredFlag);
+    }
+
+    /// <summary>The Monster Arena capture slot; 0 or 255 for monsters that can't be captured.</summary>
+    public ushort ArenaId => BinaryPrimitives.ReadUInt16LittleEndian(B[0x78..]);
+
+    private uint U32(int offset) => BinaryPrimitives.ReadUInt32LittleEndian(B[offset..]);
+    private void U32(int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(B[offset..], value);
 
     public Elements Absorb { get => (Elements)(B[AbsorbOffset] & ElementMask); set => Set(AbsorbOffset, value); }
     public Elements Immune { get => (Elements)(B[ImmuneOffset] & ElementMask); set => Set(ImmuneOffset, value); }
