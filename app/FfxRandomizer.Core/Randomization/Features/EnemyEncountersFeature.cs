@@ -78,6 +78,9 @@ public sealed class EnemyEncountersFeature : IRandomizerFeature
                 if (monster < 0 || NeverMoved.Contains(monster) || pool.Contains(monster)) continue;
                 var file = new MonsterFile(monster, context.Original.ReadFile(MonsterFile.PathFor(monster)));
                 if (!file.HasStats) continue;
+                // 1-HP placeholders (the battle treasure chest, Gemini's spawner) are the likeliest cause of the reported
+                // Thunder Plains crash, so with "sane" on they stay in their own battles.
+                if (context.Settings.IsOn("sane") && file.Stats.Hp <= 1) continue;
                 int arena = file.Stats.ArenaId;
                 bool capturable = arena != 255 && (arena != 0 || monster == 1);
                 if (capturable || BossWhitelist.Contains(monster) || EnemyWhitelist.Contains(monster)) pool.Add(monster);

@@ -62,7 +62,7 @@ public static class OptionCatalog
                 with { Implemented = true },
             Pick("encounters", "Random encounters",
                 "Which enemies you meet in each area. Every fiend is swapped with another everywhere it appears. The newcomers can keep their own stats, take the stats of the enemy they replace, or land in between.",
-                "One Thunder Plains battle has been reported to crash the game. Turning on No Encounters gets you past it.",
+                "One Thunder Plains battle has been reported to crash the game with FFXRando. Keep things sane leaves the likely cause (1-HP placeholder enemies like the battle chest) in place; if it still happens, No Encounters gets you past it.",
                 new("orig", "Original"), new("random", "Shuffle, own stats"), new("swap", "Shuffle, take replaced stats"), new("scale", "Shuffle, scale stats"))
                 with { Implemented = true },
         ]),

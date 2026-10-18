@@ -44,12 +44,24 @@ public class EncounterTests
         Assert.All(battles, b => Assert.True(original.IndexOf(EncounterFiles.PathFor(b)) >= 0, b));
         Assert.Equal([209, 80, -1, -1, -1, -1, -1, -1], EncounterFiles.Monsters(original.ReadFile(EncounterFiles.PathFor("kami00_00"))));
 
-        var context = new RandomizerContext(original, Settings(), new Seed("pool"));
+        var context = new RandomizerContext(original, Settings(sane: false), new Seed("pool"));
         var pool = EnemyEncountersFeature.EligibleEnemies(context, battles);
         Assert.Equal(137, pool.Count);
         Assert.DoesNotContain(147, pool); // Sinscale: the Zanarkand opening stays as it is
         Assert.DoesNotContain(159, pool); // Sinspawn Ammes
         Assert.Contains(211, pool);       // the battle treasure chest, which FFXRando whitelists
+    }
+
+    [Fact]
+    public void Sane_keeps_one_hp_placeholders_in_their_own_battles()
+    {
+        if (Original.Value is not { } original) return;
+
+        var battles = EncounterFiles.RandomEncounterBattles(original);
+        var context = new RandomizerContext(original, Settings(), new Seed("pool"));
+        var pool = EnemyEncountersFeature.EligibleEnemies(context, battles);
+        Assert.DoesNotContain(211, pool);
+        Assert.All(pool, m => Assert.True(new MonsterFile(m, original.ReadFile(MonsterFile.PathFor(m))).Stats.Hp > 1, $"m{m:D3}"));
     }
 
     [Fact]
