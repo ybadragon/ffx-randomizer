@@ -43,6 +43,9 @@ public sealed class GameText : IGameNames
 
     public string Language { get; private init; } = "us";
 
+    /// <summary>command.bin: battle commands and abilities 0x3000 + row (what aeons learn, what sphere grid nodes teach).</summary>
+    private string?[] Commands { get; init; } = [];
+
     /// <summary>
     /// Loads every name for <paramref name="language"/>, the two-letter code of a new_XXpc folder
     /// ("us", "de", "fr", "it", "sp", "jp", "ch", "kr").
@@ -86,8 +89,14 @@ public sealed class GameText : IGameNames
             monsters)
         {
             Language = language,
+            Commands = Table("command.bin").Names(charset),
         };
     }
+
+    public const int CommandBase = 0x3000;
+
+    /// <summary>Name of a battle command or ability (0x3000 + row of command.bin).</summary>
+    public string? CommandName(int commandId) => (commandId & 0xF000) == CommandBase ? At(Commands, commandId & 0x0FFF) : null;
 
     /// <summary>Number of rows in item.bin (items 0x2000 to 0x2000 + ItemCount - 1).</summary>
     public int ItemCount => _items.Length;

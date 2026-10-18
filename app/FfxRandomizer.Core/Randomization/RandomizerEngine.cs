@@ -29,6 +29,12 @@ public static class RandomizerEngine
         new TreasureFeature(),
         new ItemShopsFeature(),
         new CustomizationFeature(),
+        new PartyStatsFeature(),
+        new OverdriveModeFeature(),
+        new DeadlyPoisonFeature(),
+        new AeonStatsFeature(),
+        new AeonGrowthFeature(),
+        new AeonItemsFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

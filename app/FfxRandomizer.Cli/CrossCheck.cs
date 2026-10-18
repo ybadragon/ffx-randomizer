@@ -41,6 +41,10 @@ internal static partial class CrossCheck
                 }
                 if (copy.ContainsKey(KernelFiles.Treasure)) copy[KernelFiles.Treasure][0x14 + 4 * 6 + 1] ^= 1;
                 if (copy.ContainsKey(KernelFiles.ItemShops)) copy[KernelFiles.ItemShops][0x14 + 2] ^= 1;
+                string usSave = GamePaths.LanguageKernel("new_uspc", PlySave.FileName), usRom = GamePaths.LanguageKernel("new_uspc", PlyRom.FileName);
+                if (copy.ContainsKey(usSave)) copy[usSave][0x14 + PlySave.Wakka * 148 + PlySave.BaseMag] ^= 1;
+                if (copy.ContainsKey(usRom)) copy[usRom][0x14 + (PlyRom.FirstAeon + 4) * 44 + PlyRom.Coefficients + 3] ^= 1;
+                if (copy.ContainsKey(AeonFiles.SumGrow)) copy[AeonFiles.SumGrow][0x14 + 8 * 20 + 4] ^= 1;
                 files = copy;
             }
 
@@ -66,6 +70,23 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareShops(shops, stdout));
                 checkedAreas.Add($"{shops.Count} shops");
+            }
+            var party = (result.Spoiler[PartyStatsFeature.Section] as JsonArray)?.Where(e => e!["stats"] is not null || e!["overdriveMode"] is not null).ToList() ?? [];
+            var growth = (result.Spoiler[AeonStatsFeature.Section] as JsonArray)?.Where(e => e!["growth"] is not null).ToList() ?? [];
+            bool poison = result.Spoiler["rules"] is JsonArray;
+            if (party.Count > 0 || growth.Count > 0 || poison)
+            {
+                var (stdout, errors) = RunParser(files, "READ_PC_STATS");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareParty(party, growth, poison, stdout));
+                checkedAreas.Add($"{party.Count} characters, {growth.Count} aeon growths{(poison ? ", poison" : "")}");
+            }
+            if (result.Spoiler[AeonItemsFeature.Section] is JsonArray aeonItems)
+            {
+                var (stdout, errors) = RunParser(files, "READ_CUSTOMIZATIONS");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareAeonItems(aeonItems, stdout));
+                checkedAreas.Add($"{aeonItems.Count} aeon items");
             }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
@@ -112,6 +133,106 @@ internal static partial class CrossCheck
             if (!shops.TryGetValue(shop, out var theirs)) yield return $"shop {shop}: missing from FFXDataParser output";
             else if (!ours.SequenceEqual(theirs))
                 yield return $"shop {shop}: our spoiler lists [{string.Join(", ", ours)}] but FFXDataParser reads [{string.Join(", ", theirs)}]";
+        }
+    }
+
+    /// <summary>The "Index N ..." blocks of one file's section in a parser listing, by index.</summary>
+    private static Dictionary<int, string> FileBlocks(string stdout, string fileName)
+    {
+        var section = Regex.Match(stdout.Replace("\r", ""), $@"^--- [^\n]*/{Regex.Escape(fileName)} ---\n(.*?)(?=^--- ffx_ps2/|\z)", RegexOptions.Multiline | RegexOptions.Singleline);
+        return IndexBlock().Matches(section.Groups[1].Value).ToDictionary(m => int.Parse(m.Groups[1].Value), m => m.Groups[2].Value);
+    }
+
+    /// <summary>READ_PC_STATS: the US ply_save.bin (base stats, Overdrive mode, poison) and ply_rom.bin (aeon growth) listings.</summary>
+    private static IEnumerable<string> CompareParty(List<JsonNode?> party, List<JsonNode?> growth, bool poison, string stdout)
+    {
+        var saves = FileBlocks(stdout, PlySave.FileName);
+        foreach (var entry in party)
+        {
+            string name = (string)entry!["character"]!;
+            int index = Array.IndexOf(KernelFiles.CharacterNames, name);
+            if (!saves.TryGetValue(index, out string? block))
+            {
+                yield return $"{name}: missing from FFXDataParser's ply_save.bin listing";
+                continue;
+            }
+            if (entry["stats"] is JsonObject stats)
+            {
+                var parsed = Regex.Matches(block[..block.IndexOf("--- Current ---", StringComparison.Ordinal)], @"(\w+)=(\d+)")
+                    .ToDictionary(m => m.Groups[1].Value, m => int.Parse(m.Groups[2].Value));
+                foreach (var (ours, theirs) in new[] { ("hp", "HP"), ("mp", "MP"), ("strength", "STR"), ("defense", "DEF"), ("magic", "MAG"),
+                    ("magicDefense", "MDF"), ("agility", "AGI"), ("luck", "LCK"), ("accuracy", "ACC") })
+                {
+                    int expected = (int)stats[ours]!["to"]!;
+                    if (parsed.GetValueOrDefault(theirs, -1) != expected)
+                        yield return $"{name}: base {theirs} is {expected} in our spoiler but {parsed.GetValueOrDefault(theirs, -1)} according to FFXDataParser";
+                }
+            }
+            if (entry["overdriveMode"] is { } od)
+            {
+                int mode = Array.IndexOf(AeonFiles.OverdriveModes, (string)od["to"]!);
+                var shown = Regex.Match(block, @"^Overdrive Mode=.*\[([0-9A-F]{2})h\]$", RegexOptions.Multiline);
+                var learned = Regex.Match(block, @"^Already learned: .*\[([0-9A-F]+)h\]$", RegexOptions.Multiline);
+                if (!shown.Success || Convert.ToInt32(shown.Groups[1].Value, 16) != mode)
+                    yield return $"{name}: Overdrive mode is {od["to"]} in our spoiler but FFXDataParser reads \"{shown.Value}\"";
+                if (!learned.Success || (Convert.ToInt64(learned.Groups[1].Value, 16) & 1L << mode) == 0)
+                    yield return $"{name}: FFXDataParser doesn't list {od["to"]} as learned (\"{learned.Value}\")";
+            }
+        }
+        if (poison)
+            foreach (var (index, block) in saves)
+                if (!block.Contains($"Poison Damage={DeadlyPoisonFeature.Percent}%", StringComparison.Ordinal))
+                    yield return $"ply_save record {index}: FFXDataParser doesn't read {DeadlyPoisonFeature.Percent}% poison damage";
+
+        var roms = FileBlocks(stdout, PlyRom.FileName);
+        string[] labels = ["HP", "MP", "STR", "DEF", "MAG", "MDF", "AGI", "EVA", "ACC"];
+        foreach (var entry in growth)
+        {
+            string name = (string)entry!["aeon"]!;
+            int index = PlyRom.FirstAeon + Array.IndexOf(AeonFiles.Names, name);
+            if (!roms.TryGetValue(index, out string? block))
+            {
+                yield return $"{name}: missing from FFXDataParser's ply_rom.bin listing";
+                continue;
+            }
+            var lines = GrowthLine().Matches(block).ToDictionary(m => m.Groups[1].Value, m => m);
+            for (int s = 0; s < labels.Length; s++)
+            {
+                var to = (JsonArray)entry["growth"]![PlyRom.StatNames[s]]!["to"]!;
+                int a = (int)to[0]!, b = (int)to[1]!;
+                if (!lines.TryGetValue(labels[s], out var line))
+                {
+                    yield return $"{name}: no {labels[s]} growth line from FFXDataParser";
+                    continue;
+                }
+                int theirA = int.Parse(line.Groups[2].Value);
+                int theirB = (int)Math.Round(double.Parse(line.Groups[3].Value.Replace(',', '.'), System.Globalization.CultureInfo.InvariantCulture) * (s < 2 ? 100 : 10));
+                if (theirA != a || theirB != b)
+                    yield return $"{name}: {labels[s]} growth is /{a}, *{b} in our spoiler but /{theirA}, *{theirB} according to FFXDataParser";
+            }
+        }
+    }
+
+    /// <summary>READ_CUSTOMIZATIONS, sum_grow.bin section: "Index N ... - Aeon - Dark Attack [300Ah]: 6x Smoke Bomb [2028h]".</summary>
+    private static IEnumerable<string> CompareAeonItems(JsonArray entries, string stdout)
+    {
+        var lines = FileBlocks(stdout, "sum_grow.bin").ToDictionary(b => b.Key, b => b.Value.Trim());
+        foreach (var entry in entries)
+        {
+            int index = (int)entry!["index"]!;
+            string teaches = (string)entry["teaches"]!;
+            int id = (int)entry["now"]!["id"]!, quantity = (int)entry["now"]!["quantity"]!;
+            if (!lines.TryGetValue(index, out string? line))
+            {
+                yield return $"aeon item {index}: missing from FFXDataParser output";
+                continue;
+            }
+            var m = AeonItemLine().Match(line);
+            bool stat = teaches.Contains(" +", StringComparison.Ordinal);
+            bool sameWhat = m.Success && (stat ? m.Groups[1].Value.EndsWith(teaches[teaches.IndexOf(" +", StringComparison.Ordinal)..], StringComparison.Ordinal)
+                : m.Groups[1].Value.StartsWith(teaches + " [", StringComparison.Ordinal));
+            if (!sameWhat || int.Parse(m.Groups[2].Value) != quantity || Convert.ToInt32(m.Groups[3].Value, 16) != id)
+                yield return $"aeon item {index}: our spoiler says {teaches}: {quantity}x {(string?)entry["now"]!["item"]} [{id:X4}h] but FFXDataParser reads \"{line}\"";
         }
     }
 
@@ -266,4 +387,9 @@ internal static partial class CrossCheck
     private static Regex ChanceLine(string section) => new($@"^{section}: Chance=(\d+)/255", RegexOptions.Multiline);
     [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - (.*)$", RegexOptions.Multiline)] private static partial Regex TreasureLine();
     [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - Price.*\n((?:Slot #.*\n?)*)", RegexOptions.Multiline)] private static partial Regex ShopBlock();
+    [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - (.*?)(?=^Index |\z)", RegexOptions.Multiline | RegexOptions.Singleline)]
+    private static partial Regex IndexBlock();
+    [GeneratedRegex(@"^(HP|MP|STR|DEF|MAG|MDF|AGI|EVA|ACC):\s+\(Yuna's Total Stats /\s*(\d+)\) \+ Yuna's \w+\s+\* ([\d.,]+)", RegexOptions.Multiline)]
+    private static partial Regex GrowthLine();
+    [GeneratedRegex(@"^Aeon - (.*): (\d+)x .*\[([0-9A-F]{4})h\]$")] private static partial Regex AeonItemLine();
 }

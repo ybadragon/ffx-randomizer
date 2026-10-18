@@ -5,7 +5,7 @@ using FfxRandomizer.Core.Storage;
 
 // Developer tool for checking the core against a real install without the window.
 //   ffxr status
-//   ffxr apply [--seed <text>] <option-id>...     e.g. ffxr apply tidus
+//   ffxr apply [--seed <text>] <option-id> | <group>=<choice>...     e.g. ffxr apply tidus pstats=random
 //   ffxr restore
 
 var game = GameInstall.FindSteamInstall();
@@ -35,6 +35,7 @@ try
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--seed" && i + 1 < args.Length) seed = new Seed(args[++i]);
+                else if (args[i].Split('=') is [var group, var choice]) settings.Choices[group] = choice;
                 else settings.Toggles[args[i]] = true;
             }
             var outcome = service.Run(settings, seed, preset: null, new Progress<RunStep>(s => Console.WriteLine($"  {s}")));
@@ -52,6 +53,7 @@ try
             {
                 if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
                 else if (args[i] == "--sabotage") sabotage = true;
+                else if (args[i].Split('=') is [var group, var choice]) checkSettings.Choices[group] = choice;
                 else checkSettings.Toggles[args[i]] = true;
             }
             var original = service.Patcher.OpenOriginal();
