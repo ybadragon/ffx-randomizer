@@ -68,6 +68,14 @@ internal static partial class CrossCheck
                     int slot0 = EncounterFiles.Monsters(copy[battlePath])[0];
                     EncounterFiles.SetMonster(copy[battlePath], 0, slot0 == 1 ? 2 : 1);
                 }
+                // Blitzball: one bit of player 30's Catch curve in the reference event (the parser's event matching only compares the
+                // first 100 values, players 0-24, so only the curve check can see it), and of Datto's HP curve in Luca's copy only.
+                foreach (var blitz in BlitzballStats.FindCopies(original))
+                {
+                    if (!copy.TryGetValue(blitz.Path, out byte[]? ebp)) continue;
+                    if (blitz.Path.EndsWith("/bltz0002.ebp")) ebp[blitz.Offsets[BlitzStat.CA] + 30 * BlitzGrowth.Size] ^= 1;
+                    if (blitz.Path.EndsWith("/luca0400.ebp")) ebp[blitz.Offsets[BlitzStat.HP] + 2 * BlitzGrowth.Size] ^= 1;
+                }
                 files = copy;
             }
 
@@ -149,6 +157,13 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareBattles(original, pairs, battles, stdout));
                 checkedAreas.Add($"{battles.Count} battles");
+            }
+            if (result.Spoiler[BlitzballStatsFeature.Section] is JsonArray blitzball)
+            {
+                var (stdout, errors) = RunParser(files, "READ_BLITZBALL_STATS");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareBlitzball(result.Files, blitzball, stdout));
+                checkedAreas.Add($"{blitzball.Count} Blitzball players");
             }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
@@ -426,6 +441,97 @@ internal static partial class CrossCheck
         }
     }
 
+    private static readonly Lazy<HashSet<string>> VanillaBlitzballEvents = new(() => FullBlitzballEvents(RunParser(new Dictionary<string, byte[]>(), "READ_BLITZBALL_STATS").Stdout));
+
+    /// <summary>
+    /// READ_BLITZBALL_STATS prints bltz0002's curve for each player ("- blitzballPlayer:N [..h] -" then "HP: 70.0 + Lv * 30.0 + Lv^2 * 0.711"
+    /// and so on), then one "event X 1D=BlitzballStatGrowthTable_HP ..." line per event whose arrays start like bltz0002's.
+    /// Checks the curves against our files and spoiler, and that every event listed in the original game still lists all eight
+    /// tables (so every copy was written the same way).
+    /// </summary>
+    /// <param name="intended">The files the run produced (before any sabotage): what the parser should find.</param>
+    private static IEnumerable<string> CompareBlitzball(IReadOnlyDictionary<string, byte[]> intended, JsonArray entries, string stdout)
+    {
+        stdout = stdout.Replace("\r", "");
+        var theirs = new Dictionary<(int Player, BlitzStat Stat), Func<int, double>>();
+        foreach (Match block in BlitzPlayerBlock().Matches(stdout))
+        {
+            int player = int.Parse(block.Groups[1].Value);
+            foreach (Match line in Regex.Matches(block.Groups[2].Value, @"^(\w\w): (.*)$", RegexOptions.Multiline))
+                theirs[(player, Enum.Parse<BlitzStat>(line.Groups[1].Value))] = ParseBlitzFormula(line.Groups[2].Value);
+        }
+
+        var ours = BlitzballStats.FromEvent(intended[BlitzballStats.EventPath(BlitzballStats.ReferenceEvent)]);
+        int[] levels = [1, 2, 10, 50, 99];
+        for (int player = 0; player < BlitzballStats.PlayerCount; player++)
+        {
+            foreach (var stat in Enum.GetValues<BlitzStat>())
+            {
+                if (!theirs.TryGetValue((player, stat), out var curve))
+                {
+                    yield return $"Blitzball player {player} {stat}: missing from FFXDataParser output";
+                    continue;
+                }
+                // Both sides now evaluate the same float coefficients, so anything beyond rounding noise is a real difference.
+                if (levels.Any(l => Math.Abs(curve(l) - ours[player, stat].ValueAt(l)) > 1e-9 * Math.Max(1, Math.Abs(curve(l)))))
+                    yield return $"Blitzball player {player} {stat}: we wrote {ours[player, stat].Formula()} but FFXDataParser reads something else";
+            }
+        }
+        foreach (var entry in entries)
+        {
+            int player = (int)entry!["player"]!;
+            foreach (var stat in Enum.GetValues<BlitzStat>())
+            {
+                if (!theirs.TryGetValue((player, stat), out var curve)) continue;
+                var shown = entry["stats"]![stat.ToString()]!;
+                // The parser's printed coefficients are rounded, so a value right at a whole number may floor either way.
+                static bool Same(int shown, double value) => shown == (int)Math.Floor(value + 1e-4) || shown == (int)Math.Floor(value - 1e-4);
+                if (!Same((int)shown["lv1"]!, curve(1)) || !Same((int)shown["lv99"]!, curve(99)))
+                    yield return $"Blitzball player {player} {stat}: spoiler says {(int)shown["lv1"]!}-{(int)shown["lv99"]!} but FFXDataParser gives {curve(1):0.##}-{curve(99):0.##}";
+            }
+        }
+
+        var full = FullBlitzballEvents(stdout);
+        foreach (string missing in VanillaBlitzballEvents.Value.Except(full).Order())
+            yield return $"Blitzball: event {missing} no longer holds all eight tables matching bltz0002";
+    }
+
+    private static HashSet<string> FullBlitzballEvents(string stdout) =>
+        Regex.Matches(stdout.Replace("\r", ""), @"^event (\w+) (.*)$", RegexOptions.Multiline)
+            .Where(m => Regex.Matches(m.Groups[2].Value, "=BlitzballStatGrowthTable_").Count == 8)
+            .Select(m => m.Groups[1].Value).ToHashSet();
+
+    /// <summary>
+    /// Turns the parser's printed curve back into a function of level: terms "a", "Lv", "Lv * b", "Lv^(e)", "Lv^(e) * b" and
+    /// "Lv^2 * c" joined by " + ", optionally ending in " - Lv^2 * c"; "1" alone is an unused slot.
+    /// </summary>
+    private static Func<int, double> ParseBlitzFormula(string text)
+    {
+        // Java prints the shortest text that reads back as the same float, so parsing as float recovers the exact coefficient.
+        double D(string s) => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
+        var terms = new List<Func<int, double>>();
+        string[] minus = text.Split(" - ");
+        foreach (string raw in minus[0].Split(" + ").Append(minus.Length > 1 ? "-" + minus[1] : null).OfType<string>())
+        {
+            bool negative = raw.StartsWith('-');
+            string term = raw.TrimStart('-');
+            double sign = negative ? -1 : 1;
+            if (Regex.Match(term, @"^Lv\^2 \* (.+)$") is { Success: true } sq) { double c = D(sq.Groups[1].Value); terms.Add(l => sign * c * l * l); }
+            else if (Regex.Match(term, @"^Lv\^\((.+?)\)(?: \* (.+))?$") is { Success: true } pw)
+            {
+                double e = D(pw.Groups[1].Value), b = pw.Groups[2].Success ? D(pw.Groups[2].Value) : 1;
+                terms.Add(l => sign * b * Math.Pow(l, e));
+            }
+            else if (Regex.Match(term, @"^Lv(?: \* (.+))?$") is { Success: true } lin)
+            {
+                double b = lin.Groups[1].Success ? D(lin.Groups[1].Value) : 1;
+                terms.Add(l => sign * b * l);
+            }
+            else { double a = D(term); terms.Add(_ => sign * a); }
+        }
+        return level => terms.Sum(t => t(level));
+    }
+
     /// <summary>Writes the changed files as a sparse override over the original data and runs one parser mode.</summary>
     private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode, params IEnumerable<string> arguments)
     {
@@ -619,6 +725,7 @@ internal static partial class CrossCheck
     [GeneratedRegex(@"^--- ffx_ps2/ffx/master/jppc/battle/btl/(\w+)/\w+\.bin ---\n(.*?)(?=^--- ffx_ps2|\z)", RegexOptions.Multiline | RegexOptions.Singleline)]
     private static partial Regex BattleBlock();
     [GeneratedRegex(@"^Monster#([0-9A-F]{2}): m(\d{3})", RegexOptions.Multiline)] private static partial Regex FormationLine();
+    [GeneratedRegex(@"^- blitzballPlayer:(\d+) \[[0-9A-F]+h\] -\n((?:\w\w: .*\n?)*)", RegexOptions.Multiline)] private static partial Regex BlitzPlayerBlock();
     [GeneratedRegex(@"^Gil=(\d+)", RegexOptions.Multiline)] private static partial Regex GilLine();
     [GeneratedRegex(@"^AP Normal=(\d+) Overkill=(\d+)", RegexOptions.Multiline)] private static partial Regex ApLine();
     [GeneratedRegex(@"[ ]+(COMMON|RARE) Normal (\d+)x .*?\[([0-9A-F]{4})h\]; Overkill (\d+)x .*?\[([0-9A-F]{4})h\]")] private static partial Regex DropLine();

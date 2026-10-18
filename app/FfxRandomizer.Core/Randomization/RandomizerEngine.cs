@@ -43,6 +43,7 @@ public static class RandomizerEngine
         // Encounters before enemy stats: FFXRando swaps stats along with enemies first, then re-rolls on top.
         new EnemyEncountersFeature(),
         new EnemyStatsFeature(),
+        new BlitzballStatsFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)
