@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="FfxRandomizer.App/FfxRandomizer.App.csproj" />
+  <Project Path="FfxRandomizer.Cli/FfxRandomizer.Cli.csproj" />
+  <Project Path="FfxRandomizer.Core/FfxRandomizer.Core.csproj" />
+  <Project Path="FfxRandomizer.Tests/FfxRandomizer.Tests.csproj" />
+</Solution>

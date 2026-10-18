@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Product>FFX Randomizer</Product>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>

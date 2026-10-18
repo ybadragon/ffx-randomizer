@@ -1,0 +1,40 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Colors from the approved dark design. -->
+    <SolidColorBrush x:Key="Ground" Color="#0B0F14" />
+    <SolidColorBrush x:Key="Window" Color="#151B23" />
+    <SolidColorBrush x:Key="Rail" Color="#11161D" />
+    <SolidColorBrush x:Key="Panel" Color="#181F29" />
+    <SolidColorBrush x:Key="PanelSunken" Color="#161C25" />
+    <SolidColorBrush x:Key="PanelHeader" Color="#1E2A3B" />
+    <SolidColorBrush x:Key="Control" Color="#1B2330" />
+    <SolidColorBrush x:Key="ControlHover" Color="#232D3C" />
+    <SolidColorBrush x:Key="Border" Color="#2A3442" />
+    <SolidColorBrush x:Key="BorderControl" Color="#3A4656" />
+    <SolidColorBrush x:Key="Divider" Color="#252E3B" />
+    <SolidColorBrush x:Key="TitleBar" Color="#17345C" />
+
+    <SolidColorBrush x:Key="Text" Color="#E6EAF0" />
+    <SolidColorBrush x:Key="TextStrong" Color="#F2F5F9" />
+    <SolidColorBrush x:Key="TextMuted" Color="#A3AEBD" />
+    <SolidColorBrush x:Key="TextRail" Color="#B4BFCD" />
+    <SolidColorBrush x:Key="Link" Color="#8DBBF2" />
+
+    <SolidColorBrush x:Key="Accent" Color="#2F6FC0" />
+    <SolidColorBrush x:Key="AccentHover" Color="#3A7DD3" />
+    <SolidColorBrush x:Key="AccentChip" Color="#24395A" />
+    <SolidColorBrush x:Key="AccentChipText" Color="#CFE0F7" />
+    <SolidColorBrush x:Key="TagBack" Color="#222B37" />
+    <SolidColorBrush x:Key="TagText" Color="#C3CDD9" />
+
+    <SolidColorBrush x:Key="WarnBack" Color="#33290F" />
+    <SolidColorBrush x:Key="WarnText" Color="#F2D58A" />
+    <SolidColorBrush x:Key="GoodBack" Color="#173326" />
+    <SolidColorBrush x:Key="GoodText" Color="#8FDDB0" />
+    <SolidColorBrush x:Key="GoodDot" Color="#4CC283" />
+    <SolidColorBrush x:Key="GoodSolid" Color="#2F9E62" />
+    <SolidColorBrush x:Key="BadBack" Color="#3A1D1B" />
+    <SolidColorBrush x:Key="BadText" Color="#F5A99F" />
+
+    <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+</ResourceDictionary>
