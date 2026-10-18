@@ -44,7 +44,8 @@ try
 
         case "crosscheck":
         {
-            // ffxr crosscheck [--seeds N] <option-id>...   (randomizes in memory only; the game isn't touched)
+            // ffxr crosscheck [--seeds N] [--sabotage] <option-id>... [-option-id]...   (in memory only; the game isn't touched)
+            // A leading '-' switches an option off, e.g. -sane.
             var checkSettings = RandomizerSettings.Defaults();
             int seedCount = 3;
             bool sabotage = false;
@@ -52,6 +53,7 @@ try
             {
                 if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
                 else if (args[i] == "--sabotage") sabotage = true;
+                else if (args[i].StartsWith('-') && !args[i].StartsWith("--")) checkSettings.Toggles[args[i][1..]] = false;
                 else checkSettings.Toggles[args[i]] = true;
             }
             var original = service.Patcher.OpenOriginal();

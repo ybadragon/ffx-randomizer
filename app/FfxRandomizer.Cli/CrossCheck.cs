@@ -41,6 +41,15 @@ internal static partial class CrossCheck
                 }
                 if (copy.ContainsKey(KernelFiles.Treasure)) copy[KernelFiles.Treasure][0x14 + 4 * 6 + 1] ^= 1;
                 if (copy.ContainsKey(KernelFiles.ItemShops)) copy[KernelFiles.ItemShops][0x14 + 2] ^= 1;
+                // shop_arms #3's power, the first gear shop's first slot, Sensor's price, Raldo's gear drop chance.
+                if (copy.ContainsKey(GearFiles.ShopGear)) copy[GearFiles.ShopGear][0x14 + 3 * 22 + 0x09] ^= 1;
+                if (copy.ContainsKey(GearFiles.Shops)) copy[GearFiles.Shops][0x14 + 2] ^= 1;
+                if (copy.ContainsKey(GearFiles.AbilityPrices)) copy[GearFiles.AbilityPrices][0x14] ^= 1;
+                if (copy.ContainsKey(MonsterFile.PathFor(1)) && result.Settings.IsOn("geardrops"))
+                {
+                    var raldo = new MonsterFile(1, copy[MonsterFile.PathFor(1)]).Loot;
+                    raldo.SetWeaponAbility(0, 1, (ushort)(raldo.WeaponAbility(0, 1) == 0x8000 ? 0x8001 : 0x8000));
+                }
                 files = copy;
             }
 
@@ -67,6 +76,32 @@ internal static partial class CrossCheck
                 problems.AddRange(CompareShops(shops, stdout));
                 checkedAreas.Add($"{shops.Count} shops");
             }
+            if (result.Spoiler[GearAbilitiesFeature.Section] is JsonArray gear)
+            {
+                foreach (var (table, path) in GearFiles.Tables)
+                {
+                    var entries = gear.OfType<JsonObject>().Where(e => (string?)e["table"] == table).ToList();
+                    if (entries.Count == 0) continue;
+                    var (stdout, errors) = RunParser(files, "READ_WEAPON_FILE", path);
+                    problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                    problems.AddRange(CompareGear(table, entries, stdout));
+                }
+                checkedAreas.Add($"{gear.Count} gear");
+            }
+            if (result.Spoiler[GearShopsFeature.ShopSection] is JsonArray gearShops)
+            {
+                var (stdout, errors) = RunParser(files, "READ_GEAR_SHOPS");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareGearShops(gearShops, stdout));
+                checkedAreas.Add($"{gearShops.Count} gear shops");
+            }
+            if (result.Spoiler[GearShopsFeature.PriceSection] is JsonArray prices)
+            {
+                var (stdout, errors) = RunParser(files, "READ_GEAR_ABILITIES");
+                problems.AddRange(errors.Select(e => $"parser error: {e}"));
+                problems.AddRange(CompareGearPrices(prices, stdout));
+                checkedAreas.Add($"{prices.Count} ability prices");
+            }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");
@@ -77,7 +112,40 @@ internal static partial class CrossCheck
     }
 
     private sealed record Decoded(int Gil, int Ap, int ApOverkill, int PrimaryChance, int SecondaryChance, int StealChance,
-        Dictionary<string, (int Id, int Quantity)> Items, Dictionary<string, Elements> ElementSets);
+        Dictionary<string, (int Id, int Quantity)> Items, Dictionary<string, Elements> ElementSets, DecodedGear? Gear);
+
+    /// <summary>Equipment drop as FFXDataParser prints it; Rolls is keyed "weapon:Tidus" and lists the forced ability then roll counts.</summary>
+    private sealed record DecodedGear(int Chance, int Formula, int Power, int Crit, int SlotsByte, int RollsByte, Dictionary<string, string> Rolls);
+
+    private const string CharacterLetters = "TYAKWLR";
+
+    private static DecodedGear? ParseGear(string text)
+    {
+        var block = GearBlock().Match(text);
+        if (!block.Success) return null;
+        int chance = int.Parse(block.Groups[1].Value);
+        var stats = GearStatsLine().Match(block.Groups[2].Value);
+        if (!stats.Success) return new DecodedGear(chance, -1, -1, -1, -1, -1, []);
+        var rolls = new Dictionary<string, string>();
+        string kind = "";
+        foreach (string line in block.Groups[2].Value.Split('\n').Skip(1))
+        {
+            if (line.StartsWith(" Weapon ", StringComparison.Ordinal)) kind = "weapon";
+            else if (line.StartsWith(" Armor ", StringComparison.Ordinal)) kind = "armor";
+            var who = GearRollLine().Match(line);
+            if (!who.Success) continue;
+            var abilities = GearRollItem().Matches(who.Groups[2].Value).Select(a => (Name: a.Groups[1].Value, Count: a.Groups[3].Value)).ToList();
+            foreach (char letter in who.Groups[1].Value)
+                rolls[$"{kind}:{KernelFiles.CharacterNames[CharacterLetters.IndexOf(letter)]}"] = DescribeRolls(
+                    abilities.FirstOrDefault(a => a.Count == "Forced").Name,
+                    abilities.Where(a => a.Count != "Forced").SelectMany(a => Enumerable.Repeat(a.Name, int.Parse(a.Count.Split('/')[0]))));
+        }
+        return new DecodedGear(chance, int.Parse(stats.Groups[1].Value), int.Parse(stats.Groups[2].Value), int.Parse(stats.Groups[3].Value),
+            Convert.ToInt32(stats.Groups[4].Value, 16), Convert.ToInt32(stats.Groups[5].Value, 16), rolls);
+    }
+
+    private static string DescribeRolls(string? forced, IEnumerable<string> rolls) =>
+        $"forced={forced ?? "-"}; " + string.Join(", ", rolls.Order(StringComparer.Ordinal));
 
     /// <summary>"Index 4 [04h] (Offset 0024) - Gear: buki_get #2 [02h] { Yuna [01h], Weapon {...} }" and so on, one line per treasure.</summary>
     private static IEnumerable<string> CompareTreasure(JsonArray entries, string stdout)
@@ -115,8 +183,77 @@ internal static partial class CrossCheck
         }
     }
 
+    private static List<string> AbilityNames(string list) =>
+        list.Split(", ", StringSplitOptions.RemoveEmptyEntries).Where(a => a != "Empty").Select(a => HexSuffix().Replace(a, "")).ToList();
+
+    /// <summary>"Index N [..h] (Offset ..) - { Tidus [00h], Weapon [00h], Formula=... [01h], Power=16, Crit=3%, Slots=1 {Sensor [8000h]} ... }".</summary>
+    private static IEnumerable<string> CompareGear(string table, List<JsonObject> entries, string stdout)
+    {
+        var lines = GearLine().Matches(stdout.Replace("\r", "")).ToDictionary(m => int.Parse(m.Groups[1].Value));
+        foreach (var entry in entries)
+        {
+            int index = (int)entry["index"]!;
+            string who = $"{table} #{index}";
+            if (!lines.TryGetValue(index, out var m))
+            {
+                yield return $"{who}: missing from FFXDataParser output";
+                continue;
+            }
+            string theirs = m.Value;
+            if (m.Groups[2].Value != (string?)entry["for"] || m.Groups[3].Value != (string?)entry["type"])
+                yield return $"{who}: our spoiler says {(string?)entry["for"]} {(string?)entry["type"]} but FFXDataParser reads \"{theirs}\"";
+            if (entry["formula"] is { } formula && Convert.ToInt32(m.Groups[4].Value, 16) != (int)formula["to"]!["id"]!)
+                yield return $"{who}: formula {(int)formula["to"]!["id"]!:X2}h in our spoiler but FFXDataParser reads \"{theirs}\"";
+            if (entry["power"] is { } power && int.Parse(m.Groups[5].Value) != (int)power["to"]!)
+                yield return $"{who}: power {(int)power["to"]!} in our spoiler but FFXDataParser reads \"{theirs}\"";
+            if (entry["crit"] is { } crit && int.Parse(m.Groups[6].Value) != (int)crit["to"]!)
+                yield return $"{who}: crit {(int)crit["to"]!} in our spoiler but FFXDataParser reads \"{theirs}\"";
+            if (entry["slots"] is { } slots && int.Parse(m.Groups[7].Value) != (int)slots["to"]!)
+                yield return $"{who}: {(int)slots["to"]!} slots in our spoiler but FFXDataParser reads \"{theirs}\"";
+            if (entry["abilities"]?["to"] is JsonArray abilities
+                && !abilities.Select(n => (string)n!).SequenceEqual(AbilityNames(m.Groups[8].Value)))
+                yield return $"{who}: abilities [{string.Join(", ", abilities)}] in our spoiler but FFXDataParser reads \"{theirs}\"";
+        }
+    }
+
+    /// <summary>"Index N ... - Price (unused): 100%" followed by "Slot #k: { gear } [IIh]" lines, II being the shop_arms.bin index.</summary>
+    private static IEnumerable<string> CompareGearShops(JsonArray entries, string stdout)
+    {
+        var shops = ShopBlock().Matches(stdout.Replace("\r", "")).ToDictionary(
+            m => int.Parse(m.Groups[1].Value),
+            m => GearShopSlot().Matches(m.Groups[2].Value).Select(s => (Index: Convert.ToInt32(s.Groups[3].Value, 16), Abilities: AbilityNames(s.Groups[2].Value), Gear: s.Groups[1].Value)).ToList());
+        foreach (var entry in entries)
+        {
+            int shop = (int)entry!["shop"]!;
+            var ours = ((JsonArray)entry["gear"]!).OfType<JsonObject>().ToList();
+            if (!shops.TryGetValue(shop, out var theirs))
+            {
+                yield return $"gear shop {shop}: missing from FFXDataParser output";
+                continue;
+            }
+            if (!ours.Select(g => (int)g["index"]!).SequenceEqual(theirs.Select(t => t.Index)))
+                yield return $"gear shop {shop}: our spoiler sells [{string.Join(", ", ours.Select(g => (int)g["index"]!))}] but FFXDataParser reads [{string.Join(", ", theirs.Select(t => t.Index))}]";
+            else
+                for (int i = 0; i < ours.Count; i++)
+                    if (!((JsonArray)ours[i]["abilities"]!).Select(n => (string)n!).SequenceEqual(theirs[i].Abilities) || !theirs[i].Gear.StartsWith($"{{ {(string?)ours[i]["for"]} [", StringComparison.Ordinal))
+                        yield return $"gear shop {shop} slot {i}: our spoiler says {ours[i].ToJsonString()} but FFXDataParser reads \"{theirs[i].Gear}\"";
+        }
+    }
+
+    /// <summary>"8000 (Offset 0014) - Sensor { ..., Price=200 gil } ...", one line per auto-ability.</summary>
+    private static IEnumerable<string> CompareGearPrices(JsonArray entries, string stdout)
+    {
+        var prices = GearPriceLine().Matches(stdout.Replace("\r", "")).ToDictionary(m => Convert.ToInt32(m.Groups[1].Value, 16) - 0x8000, m => int.Parse(m.Groups[2].Value));
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int ours = (int)entries[i]!["to"]!;
+            if (!prices.TryGetValue(i, out int theirs)) yield return $"{(string?)entries[i]!["ability"]}: price missing from FFXDataParser output";
+            else if (ours != theirs) yield return $"{(string?)entries[i]!["ability"]}: price {ours} in our spoiler but {theirs} according to FFXDataParser";
+        }
+    }
+
     /// <summary>Writes the changed files as a sparse override over the original data and runs one parser mode.</summary>
-    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode)
+    private static (string Stdout, List<string> Errors) RunParser(IReadOnlyDictionary<string, byte[]> files, string mode, params string[] arguments)
     {
         string root = Directory.CreateTempSubdirectory("ffxr-crosscheck-").FullName;
         string link = Path.Combine(root, "ffx_ps2");
@@ -136,7 +273,7 @@ internal static partial class CrossCheck
                 File.WriteAllBytes(target, bytes);
             }
 
-            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode])
+            var start = new ProcessStartInfo("java", ["-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-cp", "target/classes", "main.Main", root.Replace('\\', '/') + "/", mode, .. arguments])
             {
                 WorkingDirectory = ParserDir,
                 RedirectStandardOutput = true,
@@ -193,7 +330,7 @@ internal static partial class CrossCheck
                         .Select(n => n == "Thunder" ? Elements.Lightning : Enum.Parse<Elements>(n)).Aggregate(Elements.None, (a, b) => a | b);
 
             monsters[index] = new Decoded(Int(GilLine()), Int(ApLine()), Int(ApLine(), 2),
-                Int(ChanceLine("Primary Item Drop")), Int(ChanceLine("Secondary Item Drop")), Int(ChanceLine("Steal Item")), items, elements);
+                Int(ChanceLine("Primary Item Drop")), Int(ChanceLine("Secondary Item Drop")), Int(ChanceLine("Steal Item")), items, elements, ParseGear(text));
         }
         return monsters;
     }
@@ -235,6 +372,33 @@ internal static partial class CrossCheck
         }
         if (entry["bribe"] is { } bribe)
             foreach (string p in CheckItem("bribe", bribe, d)) yield return p;
+        if (entry["gear"] is JsonObject gear)
+        {
+            int chance = (int)gear["chance"]!["to"]!;
+            if (d.Gear is not { } g) yield return $"{who}: gear drop missing from FFXDataParser output";
+            else
+            {
+                foreach (string p in Check("gear drop chance", chance, g.Chance)) yield return p;
+                // The parser only prints the gear's details when it can drop, and its abilities when there are ability rolls.
+                if (chance > 0)
+                {
+                    foreach (string p in Check("gear formula", (int)gear["formula"]!["id"]!, g.Formula)) yield return p;
+                    foreach (string p in Check("gear power", (int)gear["power"]!, g.Power)) yield return p;
+                    foreach (string p in Check("gear crit", (int)gear["crit"]!, g.Crit)) yield return p;
+                    foreach (string p in Check("gear slot byte", (int)gear["slotsByte"]!, g.SlotsByte)) yield return p;
+                    foreach (string p in Check("gear ability roll byte", (int)gear["abilityRollsByte"]!, g.RollsByte)) yield return p;
+                    if ((int)gear["abilityRollsByte"]! > 0)
+                        foreach (string kind in new[] { "weapon", "armor" })
+                            foreach (string character in KernelFiles.CharacterNames)
+                            {
+                                var mine = gear[kind]![character]!;
+                                string ours = DescribeRolls((string?)mine["forced"], ((JsonArray)mine["rolls"]!).Select(n => (string)n!));
+                                string theirs = g.Rolls.GetValueOrDefault($"{kind}:{character}", "(missing)");
+                                if (ours != theirs) yield return $"{who}: {character}'s {kind} abilities are \"{ours}\" in our spoiler but \"{theirs}\" according to FFXDataParser";
+                            }
+                }
+            }
+        }
         if (entry["elements"] is JsonObject elements)
         {
             foreach (var (ours, theirs) in new[] { ("weak", "Weak"), ("resist", "Resist"), ("immune", "Immune"), ("absorb", "Absorb") })
@@ -266,4 +430,13 @@ internal static partial class CrossCheck
     private static Regex ChanceLine(string section) => new($@"^{section}: Chance=(\d+)/255", RegexOptions.Multiline);
     [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - (.*)$", RegexOptions.Multiline)] private static partial Regex TreasureLine();
     [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - Price.*\n((?:Slot #.*\n?)*)", RegexOptions.Multiline)] private static partial Regex ShopBlock();
+    [GeneratedRegex(@" \[[0-9A-F]{4}h\]$")] private static partial Regex HexSuffix();
+    [GeneratedRegex(@"^Gear Drop: Chance=(\d+)/255\n((?:[ ].*\n?)*)", RegexOptions.Multiline)] private static partial Regex GearBlock();
+    [GeneratedRegex(@"^ Formula=(\d+), Power=(\d+), Crit=(\d+)%, Slots=.*?\[([0-9A-F]{2})h\], Ability Rolls=.*?\[([0-9A-F]{2})h\]")] private static partial Regex GearStatsLine();
+    [GeneratedRegex(@"([TYAKWLR]+): (.*)$")] private static partial Regex GearRollLine();
+    [GeneratedRegex(@"(.+?) \[([0-9A-F]{4})h\] \((Forced|\d+/7)\)(?:, |$)")] private static partial Regex GearRollItem();
+    [GeneratedRegex(@"^Index (\d+) \[[0-9A-F]+h\] \(Offset [0-9A-F]+\) - \{ (.+?) \[[0-9A-F]+h\], (Weapon|Armor) \[[0-9A-F]+h\], Formula=.*? \[([0-9A-F]{2})h\], Power=(\d+), Crit=(\d+)%, Slots=(\d+) \{([^}]*)\}.*$", RegexOptions.Multiline)]
+    private static partial Regex GearLine();
+    [GeneratedRegex(@"^Slot #\d+: (\{ .*?Slots=\d+ \{([^}]*)\}.*\}) \[([0-9A-F]+)h\]$", RegexOptions.Multiline)] private static partial Regex GearShopSlot();
+    [GeneratedRegex(@"^([0-9A-F]{4}) \(Offset [0-9A-F]+\) - .*?Price=(\d+) gil", RegexOptions.Multiline)] private static partial Regex GearPriceLine();
 }

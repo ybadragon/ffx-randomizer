@@ -29,6 +29,10 @@ public static class RandomizerEngine
         new TreasureFeature(),
         new ItemShopsFeature(),
         new CustomizationFeature(),
+        new GearAbilitiesFeature(),
+        new WeaponStatsFeature(),
+        new GearShopsFeature(),
+        new EnemyGearDropsFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)
