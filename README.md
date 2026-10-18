@@ -27,30 +27,36 @@ Click **Restore original** to put the game back exactly as Steam installed it. A
 
 ## What it can randomize
 
-| Area | Status |
+Everything FFXRando can randomize, plus Blitzball:
+
+| Tab | Options |
 |---|---|
-| Tidus starts with 9999 HP (quick check that randomizing works) | ✅ |
-| Enemies: item drops, steals, bribes, gil and AP | ✅ |
-| Enemies: elemental affinities | ✅ |
-| Items & Shops: treasure and field items (optionally key items, Celestial items, Brotherhood) | ✅ |
-| Items & Shops: item shops, prices, always-sell-spheres | ✅ |
-| Items & Shops: customization items | ✅ |
-| Enemy equipment drops, gear abilities, weapon stats, gear shops | Coming soon |
-| Party stats, starting Overdrive mode | Coming soon |
-| Aeon stats and power-up items | Coming soon |
-| Sphere Grid | Coming soon |
-| Random encounters, enemy stats | Coming soon |
+| Party | Party stats (shuffle or randomize), starting Overdrive mode, deadly poison, and Tidus starts with 9999 HP (a quick check that randomizing works) |
+| Enemies | Item drops, steals, bribes, gil and AP, equipment drops, elemental affinities, enemy stats, random encounters |
+| Items & Shops | Treasure and field items (optionally key items, Celestial items, Brotherhood), item shops and prices, customization items |
+| Gear | Gear abilities, weapon and armor shops and prices, weapon crit, attack and damage formula |
+| Aeons | Base stats, stat growth, power-up items |
+| Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
+| Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
 
-Options that aren't ported yet appear in the app marked **Coming soon**.
+**Keep things sane** (on by default) keeps the game playable:
+- Random values stay within sensible limits.
+- Weapons can't get a damage formula that deals no damage.
+- Lock nodes stay where they are.
+- The battle treasure chest and similar placeholder enemies aren't moved by random encounters.
 
-The Withered Bouquet and Flint chests in Baaj Temple never move, because the story needs both to light the fire.
+Some things always hold, sane or not:
+- The Withered Bouquet and Flint chests in Baaj Temple never move, because the story needs both to light the fire.
+- With any Sphere Grid mode on, Rikku starts with Steal and Use, and the other abilities each character's tutorial needs are given at the start.
+
+Sphere Grid changes only reach a new game. One Thunder Plains battle has been reported to crash with FFXRando's random encounters. If it happens, turn random encounters off or use No Encounters to get past it.
 
 ### Presets, seeds and History
 
 - **Presets** save a set of options (not a seed), so every run from a preset is a new game. Built-in presets are read-only; duplicate one to make your own. Change options and click **Update preset** to save changes to the loaded preset.
 - **Set seed** makes a specific game. The same seed, options and app version always produce the same game.
 - **History** records every run with its seed and options. **Use settings** reloads the options with a new seed, and **Replay this seed** recreates the exact game.
-- The **spoiler log** is JSON. It lists every change: each enemy's new drops, steals, bribe and elements; every chest; and every shop's stock.
+- The **spoiler log** is JSON. It lists every change: each enemy's new drops, steals, bribe, elements and stats; every chest; every shop's stock; every piece of gear; character, aeon and Blitzball player stats; and which enemies replaced which.
 
 | Presets | History |
 |---|---|
@@ -90,12 +96,14 @@ Projects in `app/`:
 
 ```
 ffxr status                               # where the game is and whether it's randomized
-ffxr apply [--seed X] <option-id>...      # randomize without the app, e.g. ffxr apply rewards drops steals
+ffxr apply [--seed X] <option>...         # randomize without the app, e.g. ffxr apply rewards drops estats=random
 ffxr restore
-ffxr crosscheck [--seeds N] [--sabotage] <option-id>...
+ffxr crosscheck [--seeds N] [--sabotage] <option>...
 ```
 
-`crosscheck` randomizes in memory only and never touches the game. It decodes the output with [FFXDataParser](https://github.com/Karifean/FFXDataParser), an independent parser, and compares every enemy, chest and shop with the spoiler. `--sabotage` deliberately corrupts a few values to show the check catches them. It needs Java, a local build of FFXDataParser (`FFXDATAPARSER_DIR`, default `C:\Github\Personal\FFXDataParser`), and an extracted `ffx_ps2` folder (`FFXR_VANILLA_ROOT`). `tools/ffxdataparser.ps1` runs the parser on its own.
+An option is a toggle id (`rewards`), a choice (`gridmode=shuffle`) or, for `crosscheck`, `-id` to switch a default off (`-sane`).
+
+`crosscheck` randomizes in memory only and never touches the game. It decodes the output with [FFXDataParser](https://github.com/Karifean/FFXDataParser), an independent parser, and compares every area with the spoiler: enemies, battles, chests, shops, gear, party and aeon stats, the Sphere Grid and Blitzball players. `--sabotage` deliberately corrupts a few values to show the check catches them. It needs Java, a local build of FFXDataParser (`FFXDATAPARSER_DIR`, default `C:\Github\Personal\FFXDataParser`), and an extracted `ffx_ps2` folder (`FFXR_VANILLA_ROOT`). `tools/ffxdataparser.ps1` runs the parser on its own.
 
 The original C++ FFXRando source is kept in `src/` as the reference for porting.
 
