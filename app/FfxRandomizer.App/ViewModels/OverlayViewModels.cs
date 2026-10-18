@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FfxRandomizer.Core;
+using FfxRandomizer.Core.Randomization;
 using FfxRandomizer.Core.Storage;
 
 namespace FfxRandomizer.App.ViewModels;
@@ -41,6 +42,8 @@ public sealed partial class RunViewModel : ObservableObject
     [ObservableProperty] private bool _isFinished;
     [ObservableProperty] private HistoryEntry? _entry;
     [ObservableProperty] private IReadOnlyList<string> _changes = [];
+    [ObservableProperty] private string _saveAdviceTitle = "";
+    [ObservableProperty] private string _saveAdvice = "";
 
     // Preset prompt on the finished screen.
     [ObservableProperty] private string? _presetName;
@@ -66,6 +69,11 @@ public sealed partial class RunViewModel : ObservableObject
         Percent = 100;
         Entry = outcome.Entry;
         Changes = SpoilerLog.Describe(outcome.Result.Settings).ToList();
+        var needNewGame = SaveImpacts.NeedingNewGame(outcome.Result.Settings);
+        (SaveAdviceTitle, SaveAdvice) = needNewGame.Count == 0
+            ? ("Your current save works", "Everything in this run applies to existing saves, so load your save or start a New Game.")
+            : ("Start a New Game to get everything",
+                $"These only fully apply to a new game: {string.Join(", ", needNewGame)}. Everything else also works if you load an existing save.");
         PresetName = loaded?.Name;
         NoPreset = loaded is null;
         PresetModified = loaded is not null && modified;
