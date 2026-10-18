@@ -5,7 +5,7 @@ using FfxRandomizer.Core.Storage;
 
 // Developer tool for checking the core against a real install without the window.
 //   ffxr status
-//   ffxr apply [--seed <text>] <option-id>...     e.g. ffxr apply tidus
+//   ffxr apply [--seed <text>] <option-id> | <group>=<choice>...     e.g. ffxr apply tidus pstats=random
 //   ffxr restore
 
 var game = GameInstall.FindSteamInstall();
@@ -35,7 +35,7 @@ try
             for (int i = 1; i < args.Length; i++)
             {
                 if (args[i] == "--seed" && i + 1 < args.Length) seed = new Seed(args[++i]);
-                else settings.Toggles[args[i]] = true;
+                else SetOption(settings, args[i]);
             }
             var outcome = service.Run(settings, seed, preset: null, new Progress<RunStep>(s => Console.WriteLine($"  {s}")));
             Console.WriteLine($"Applied seed {outcome.Entry.Seed}: {outcome.Entry.FileCount} files.");
@@ -44,7 +44,8 @@ try
 
         case "crosscheck":
         {
-            // ffxr crosscheck [--seeds N] <option-id>...   (randomizes in memory only; the game isn't touched)
+            // ffxr crosscheck [--seeds N] [--sabotage] <option-id>... [-option-id]...   (in memory only; the game isn't touched)
+            // A leading '-' switches an option off, e.g. -sane.
             var checkSettings = RandomizerSettings.Defaults();
             int seedCount = 3;
             bool sabotage = false;
@@ -52,7 +53,7 @@ try
             {
                 if (args[i] == "--seeds" && i + 1 < args.Length) seedCount = int.Parse(args[++i]);
                 else if (args[i] == "--sabotage") sabotage = true;
-                else checkSettings.Toggles[args[i]] = true;
+                else SetOption(checkSettings, args[i]);
             }
             var original = service.Patcher.OpenOriginal();
             var seeds = Enumerable.Range(0, seedCount).Select(i => new Seed($"crosscheck-{i}")).ToList();
@@ -73,4 +74,13 @@ catch (Exception e)
     Console.Error.WriteLine($"ERROR: {e.Message}");
     if (e.InnerException is not null) Console.Error.WriteLine($"  {e.InnerException.Message}");
     return 1;
+}
+
+// "drops" switches an option on; "estats=random" picks a choice.
+static void SetOption(RandomizerSettings settings, string arg)
+{
+    // A leading '-' switches an option off, e.g. -sane.
+    if (arg.StartsWith('-') && !arg.StartsWith("--")) settings.Toggles[arg[1..]] = false;
+    else if (arg.Split('=', 2) is [var group, var choice]) settings.Choices[group] = choice;
+    else settings.Toggles[arg] = true;
 }
