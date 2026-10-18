@@ -1,4 +1,4 @@
-﻿<mah:MetroWindow x:Class="FfxRandomizer.App.MainWindow"
+<mah:MetroWindow x:Class="FfxRandomizer.App.MainWindow"
                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:mah="http://metro.mahapps.com/winfx/xaml/controls"
@@ -362,20 +362,17 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="{Binding GameTitle}" Style="{StaticResource Strong}" FontSize="14" />
-                            <TextBlock Text="{Binding GameDetail}" Style="{StaticResource Small}" FontSize="12.5" TextTrimming="CharacterEllipsis" MaxWidth="320" />
-                        </StackPanel>
-                        <Border Style="{StaticResource GoodChip}" Visibility="{Binding StatusIsRandomized, Converter={StaticResource Show}}">
-                            <TextBlock Text="{Binding StatusText}" />
+                    <StackPanel VerticalAlignment="Center" ToolTip="{Binding GameDetail}">
+                        <TextBlock Text="{Binding GameTitle}" Style="{StaticResource Strong}" FontSize="14" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" Margin="0,0,0,4" />
+                        <Border Style="{StaticResource GoodChip}" HorizontalAlignment="Left" Visibility="{Binding StatusIsRandomized, Converter={StaticResource Show}}">
+                            <TextBlock Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" />
                         </Border>
-                        <Border Style="{StaticResource Chip}" Background="{StaticResource TagBack}"
+                        <Border Style="{StaticResource Chip}" Background="{StaticResource TagBack}" HorizontalAlignment="Left"
                                 Visibility="{Binding StatusIsRandomized, Converter={x:Static vm:Converters.HideWhenTrue}}">
-                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TagText}" />
+                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TagText}" TextTrimming="CharacterEllipsis" />
                         </Border>
                     </StackPanel>
-                    <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                    <WrapPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0,0,0">
                         <TextBlock Style="{StaticResource Body}" Foreground="{StaticResource TextRail}" VerticalAlignment="Center" Margin="0,0,8,0">
                             <Run Text="Preset" /> <Run Text="{Binding PresetLabel, Mode=OneWay}" FontWeight="SemiBold" Foreground="{StaticResource Text}" />
                         </TextBlock>

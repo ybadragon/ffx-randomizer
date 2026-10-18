@@ -75,7 +75,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _useFixedSeed;
     [ObservableProperty] private string _seedText = "";
 
-    [ObservableProperty] private string _gameTitle = "FINAL FANTASY X/X-2 HD Remaster";
+    [ObservableProperty] private string _gameTitle = "FINAL FANTASY X HD";
     [ObservableProperty] private string _gameDetail = "Looking for your Steam copy";
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private bool _statusIsRandomized;
@@ -275,10 +275,10 @@ public sealed partial class MainViewModel : ObservableObject
             var applied = StatusIsRandomized ? _service.AppliedEntry() : null;
             StatusText = status switch
             {
-                GameDataStatus.Randomized when applied is not null => $"Randomized · seed {applied.Seed}",
                 GameDataStatus.Randomized => "Randomized",
                 _ => "Original game",
             };
+            if (applied is not null) StatusText = $"Randomized · seed {applied.Seed}";
         }
         catch (IOException)
         {
