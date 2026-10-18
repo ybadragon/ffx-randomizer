@@ -92,6 +92,23 @@ public readonly struct MonsterLoot(Memory<byte> block)
     public ItemStack Bribe { get => new(U16(0x2A), B[0x2C]); set { U16(0x2A, value.Item); B[0x2C] = value.Quantity; } }
     public byte GilSteal { get => B[0x113]; set => B[0x113] = value; }
 
+    // Equipment drops. The slot and ability bytes are roll counts: about byte/4 slots (1 to 4) and byte/8 ability rolls.
+    public const int GearCharacters = 7, GearAbilitySlots = 8;
+    public byte GearSlotsByte { get => B[0x2D]; set => B[0x2D] = value; }
+    public byte GearFormula { get => B[0x2E]; set => B[0x2E] = value; }
+    public byte GearCrit { get => B[0x2F]; set => B[0x2F] = value; }
+    public byte GearPower { get => B[0x30]; set => B[0x30] = value; }
+    public byte GearAbilityRollsByte { get => B[0x31]; set => B[0x31] = value; }
+
+    /// <summary>
+    /// Per character (0x32 + character * 0x20): eight weapon abilities, then eight armor abilities. Slot 0 is always put on
+    /// the dropped gear when it isn't 0 (Auron's and Kimahri's Piercing); slots 1-7 are what the ability rolls pick from.
+    /// </summary>
+    public ushort WeaponAbility(int character, int slot) => U16(0x32 + character * 0x20 + slot * 2);
+    public void SetWeaponAbility(int character, int slot, ushort ability) => U16(0x32 + character * 0x20 + slot * 2, ability);
+    public ushort ArmorAbility(int character, int slot) => U16(0x42 + character * 0x20 + slot * 2);
+    public void SetArmorAbility(int character, int slot, ushort ability) => U16(0x42 + character * 0x20 + slot * 2, ability);
+
     private ushort U16(int offset) => BinaryPrimitives.ReadUInt16LittleEndian(B[offset..]);
     private void U16(int offset, ushort value) => BinaryPrimitives.WriteUInt16LittleEndian(B[offset..], value);
 }

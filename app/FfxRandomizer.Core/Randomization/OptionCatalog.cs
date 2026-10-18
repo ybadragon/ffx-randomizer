@@ -49,7 +49,7 @@ public static class OptionCatalog
                 new("drops", "Item drops", "Gil, AP and normal, rare and overkill drops"),
                 new("steals", "Steals", "What Steal and Mug can take (always succeeds)"),
                 new("bribes", "Bribes", "What Bribe gets you"),
-                new("geardrops", "Equipment drops", "Weapons and armor enemies drop", Implemented: false),
+                new("geardrops", "Equipment drops", "Drop chance and the abilities on weapons and armor enemies drop"),
             ]),
             Toggle("elements", "Elemental affinities",
                 "Enemy weaknesses, resistances, immunities and absorptions for Fire, Ice, Thunder, Water and Holy are re-rolled.",
@@ -79,16 +79,19 @@ public static class OptionCatalog
         ]),
         new("gear", "Gear", "Weapon and armor abilities, stats and shops.",
         [
-            Toggle("gearab", "Gear abilities", "Abilities on weapons and armor are randomized."),
-            Toggle("wshops", "Weapon and armor shops", "Each shop sells a random selection of gear.", subOptions:
+            Toggle("gearab", "Gear abilities",
+                "Slots and abilities on every weapon and armor, in shops, chests and your starting gear, are randomized. Celestial weapons and Brotherhood follow the Items tab options.",
+                implemented: true),
+            Toggle("wshops", "Weapon and armor shops", "Each shop sells a random selection of gear.", implemented: true, subOptions:
             [
                 new("wprices", "Random prices", "Prices change too"),
             ]),
-            Toggle("wstats", "Weapon stats", "Change how weapons deal damage.", subOptions:
+            Toggle("wstats", "Weapon stats", "Change how weapons deal damage. Also applies to equipment enemies drop.", implemented: true, subOptions:
             [
                 new("crit", "Critical hit chance", "Random crit rate per weapon"),
                 new("atk", "Attack power", "Random attack bonus per weapon"),
-                new("formula", "Damage formula", "How damage is calculated", "Can make weapons deal 0 damage"),
+                new("formula", "Damage formula", "How damage is calculated",
+                    "With Keep things sane off, weapons can heal enemies or deal 0 damage"),
             ]),
         ]),
         new("aeons", "Aeons", "Aeon stats and the items that power them up.",
