@@ -39,6 +39,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
 | Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers Dream Zanarkand (the campfire, stadium, highway and Sinspawn scenes) and 9 Besaid scenes so far; later visits play as usual |
+| Story (experimental) | Soft reset: hold L1 + R1 + Start for about a second in the field to fade out and return to the title screen (not in battles or menus). In 317 of the 324 areas |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.
@@ -107,6 +108,7 @@ ffxr save delete --slot N
 ffxr cutscenes find --area znkd,bsil [--emit] # cutscenes found in events, their skip-safety audit and what was left out
 ffxr cutscenes audit [--area <prefix>]       # the skip-safety audit of every scene "Skip cutscenes" covers
 ffxr cutscenes saves --from <file> (--slots A-B | --out <folder>)  # a save just before each covered scene
+ffxr softreset plan                          # which areas get the soft reset (and why the rest don't), apply time and size
 ```
 
 An option is a toggle id (`rewards`), a choice (`gridmode=shuffle`) or, for `crosscheck`, `-id` to switch a default off (`-sane`).

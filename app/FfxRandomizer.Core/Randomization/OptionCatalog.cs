@@ -167,6 +167,10 @@ public static class OptionCatalog
                         Warnings: SkipButtons.All.Where(b => b.AdvancesDialogue).ToDictionary(b => b.Id,
                             b => $"{b.Label} also advances dialogue, so holding it may skip lines before the scene skips.")),
                 },
+            Toggle("softreset", "Soft reset: hold L1 + R1 + Start to return to the title screen",
+                "Holding all three for about a second fades to black and goes back to the title screen, as after a game over. Works in the field (almost every area, cutscenes included), not in battles or menus. Your last save is untouched.",
+                badge: "Experimental", implemented: true,
+                warning: "Experimental: untested in-game. A few areas don't have it (`ffxr softreset plan` lists them)."),
         ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
         [

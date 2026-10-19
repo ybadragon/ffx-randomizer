@@ -55,10 +55,12 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 byte[] original = context.Original.ReadFile(path);
                 if (VbfArchive.BlocksFor((ulong)written.Length) != VbfArchive.BlocksFor((ulong)original.Length))
                     yield return $"{scene.Name}: {path} changed its 64 KB block count.";
-                if (!written.AsSpan().SequenceEqual(bytes))
+                // Soft reset (which runs later) may add its watcher to the event; it checks that part itself.
+                byte[] final = SoftResetFeature.On(context.Settings) ? SoftReset.WithWatcher(path, bytes) : bytes;
+                if (!written.AsSpan().SequenceEqual(final))
                     yield return $"{scene.Name}: {path} isn't what the edit produces (another feature changed it?).";
                 bool isEvent = path.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase);
-                var problems = isEvent ? CheckEvent(original, written, mode) : CheckText(original, written, Cutscenes.PromptCount);
+                var problems = isEvent ? CheckEvent(original, bytes, mode) : CheckText(original, written, Cutscenes.PromptCount);
                 foreach (string problem in problems) yield return $"{scene.Name}: {path}: {problem}";
             }
         }

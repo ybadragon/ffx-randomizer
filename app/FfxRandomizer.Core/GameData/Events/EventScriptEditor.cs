@@ -45,6 +45,13 @@ public sealed class EventScriptEditor
     public int JumpTarget(int worker, int jump) => (int)U32(_s, JumpSlot(worker, jump));
     public ReadOnlySpan<byte> Code(int offset, int length) => _s.AsSpan(CodeStart + offset, length);
 
+    /// <summary>
+    /// The chunk offsets of the shared data (variables' storage, which comes after the code and moves as one block when
+    /// code is added) and of the first worker's tables, where it ends.
+    /// </summary>
+    public int SharedDataStart => (int)U32(_s, Worker(0) + 0x30);
+    public int WorkerTablesStart => Enumerable.Range(0, WorkerCount).Min(w => (int)U32(_s, Worker(w) + 0x20));
+
     /// <summary>Code inserted so far, as (code offset, length) in the current layout.</summary>
     public IReadOnlyList<(int Offset, int Length)> InsertedCode => _insertedCode;
 

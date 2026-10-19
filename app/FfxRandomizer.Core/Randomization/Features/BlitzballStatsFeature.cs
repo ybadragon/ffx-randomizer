@@ -133,7 +133,7 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
             yield return $"Blitzball: {copies[0].Path} wasn't updated.";
             yield break;
         }
-        var written = BlitzballStats.FromCopy(first, copies[0]);
+        var written = BlitzballStats.FromCopy(first, copies[0].In(context.Original.ReadFile(copies[0].Path), first));
         bool sane = context.Settings.IsOn("sane");
         bool stars = context.Settings.IsOn("blitzstars");
 
@@ -145,18 +145,27 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
                 continue;
             }
             byte[] before = context.Original.ReadFile(copy.Path);
-            if (bytes.Length != before.Length)
+            // Soft reset adds code to field events, which moves the tables (shared data) along; nothing else may change.
+            bool grown = bytes.Length != before.Length;
+            if (grown && !SoftResetFeature.On(context.Settings))
             {
                 yield return $"Blitzball: {copy.Path} changed size.";
                 continue;
             }
-            var mine = BlitzballStats.FromCopy(bytes, copy);
+            var mine = BlitzballStats.FromCopy(bytes, copy.In(before, bytes));
             foreach (var stat in Enum.GetValues<BlitzStat>())
             {
                 if (!mine.Encode(stat).AsSpan().SequenceEqual(written.Encode(stat)))
                     yield return $"Blitzball: {copy.Path} has a different {stat} table than {copies[0].Path}.";
             }
-            if (FirstChangeOutsideTables(before, bytes, copy) is int at)
+            if (grown)
+            {
+                byte[] tabled = (byte[])before.Clone();
+                mine.WriteTo(tabled, copy);
+                if (!SoftReset.WithWatcher(copy.Path, tabled).AsSpan().SequenceEqual(bytes))
+                    yield return $"Blitzball: {copy.Path} isn't its stat tables plus the soft reset watcher.";
+            }
+            else if (FirstChangeOutsideTables(before, bytes, copy) is int at)
                 yield return $"Blitzball: {copy.Path} changed outside the stat tables at 0x{at:X}.";
         }
 

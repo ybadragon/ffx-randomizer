@@ -24,36 +24,8 @@ internal static partial class CrossCheck
         foreach (var group in Cutscenes.ByEvent)
         {
             string eventId = group.Key;
-            string path = Cutscenes.EventPath(eventId);
-            var (vanillaOut, vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", eventId);
-            var (patchedOut, patchedErrors) = RunParser(files, "PARSE_EVENT", eventId);
-            foreach (string e in vanillaErrors.Concat(patchedErrors)) yield return $"{eventId}: parser error: {e}";
-
-            var changes = CutsceneSkipFeature.ChangedCode(original.ReadFile(path), files[path]);
-            var lines = patchedOut.Replace("\r", "").Split('\n');
-            bool Ours(string line) => CodeOffset(line) is int at && changes.Inserted.Any(r => at >= r.Offset && at < r.Offset + r.Length);
-            // Instructions blanked out by NOPs: vanilla shows the original instruction, and the parser folds the NOPs into
-            // the next instruction's line ("00 ... 00 AEF000 D80000"), so that line loses its NOP prefix for comparing.
-            bool Blanked(string line) => CodeOffset(line) is int at && changes.Nopped.Any(n => at >= n.Original && at < n.Original + n.Length);
-            string ours = string.Join("\n", lines.Where(Ours));
-            foreach (var n in changes.Nopped)
-                if (!lines.Any(l => CodeOffset(l) == n.Offset && NopRun().IsMatch(l)))
-                    yield return $"{eventId}: the blanked-out instruction at {n.Offset:X4} doesn't read back as NOPs";
-            string Unblanked(string line) =>
-                CodeOffset(line) is int at && changes.Nopped.Any(n => n.Offset == at) ? NopRun().Replace(line, "", 1) : line;
-            // FFXR_CROSSCHECK_DUMP=<folder> saves both listings for reading.
-            if (Environment.GetEnvironmentVariable("FFXR_CROSSCHECK_DUMP") is { Length: > 0 } dump)
-            {
-                Directory.CreateDirectory(dump);
-                File.WriteAllText(Path.Combine(dump, $"{eventId}.vanilla.txt"), vanillaOut);
-                File.WriteAllText(Path.Combine(dump, $"{eventId}.{mode}.txt"), patchedOut);
-            }
-
-            var vanilla = Normalize(vanillaOut.Replace("\r", "").Split('\n').Where(l => !Blanked(l))).ToList();
-            var patched = Normalize(lines.Where(l => !Ours(l)).Select(Unblanked)).ToList();
-            var diff = vanilla.Except(patched).Concat(patched.Except(vanilla)).ToList();
-            if (diff.Count > 0 || vanilla.Count != patched.Count)
-                yield return $"{eventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{diff.FirstOrDefault()}\"";
+            var (ours, listingProblems, lines, changes) = CompareListing(original, files, eventId, mode);
+            foreach (string p in listingProblems) yield return p;
 
             // Each scene's first-visit guard (both bounds when it has a lower one), wherever the mode puts it.
             foreach (var scene in group)
@@ -85,6 +57,8 @@ internal static partial class CrossCheck
             if (prompts != group.Count() * (Cutscenes.Steps + 1)) yield return $"{eventId}: the parser shows {prompts} hold-to-skip prompts, expected {group.Count() * (Cutscenes.Steps + 1)}";
             // The hold test must be the "button is down" call on the chosen button, never the press-only 0x0046.
             int expectedTests = watched.Count * (Cutscenes.IntroFrames / Cutscenes.IntroPollFrames + 1 + polls) + started.Count * (1 + polls);
+            // Soft reset's watcher tests L1, R1 and Start once per poll too.
+            if (SoftReset.Buttons.Contains(button.Index) && SoftResetFeature.HasWatcher(files[Cutscenes.EventPath(eventId)])) expectedTests += SoftReset.HoldFrames / SoftReset.PollFrames + 1;
             int downTests = DownTest().Matches(ours).Count(m => m.Groups[1].Value == $"{button.Index:X2}");
             if (downTests != expectedTests)
                 yield return $"{eventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {expectedTests}";
@@ -106,13 +80,62 @@ internal static partial class CrossCheck
                     yield return $"{eventId} {scene.Name}: nothing starts the watcher on w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}";
             }
         }
-
-        static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing
-            .Select(l => EventLabel().Replace(l, "").Replace(" ", ""))
-            .Select(l => JumpTarget().Replace(l, ""))
-            .Select(l => PrivateAddress().Replace(l, "priv"))
-            .Where(l => l.Length > 0);
     }
+
+    /// <summary>
+    /// Disassembles an edited event and its original with PARSE_EVENT. Returns the listing of the inserted code, the
+    /// patched listing's lines and the edit's code changes, and problems: parser errors, blanked-out instructions that
+    /// don't read back as NOPs, and any difference from vanilla outside the inserted code (addresses and labels aside).
+    /// </summary>
+    private static (string Ours, List<string> Problems, string[] Lines, CutsceneSkipFeature.CodeChanges Changes) CompareListing(
+        VbfArchive original, IReadOnlyDictionary<string, byte[]> files, string eventId, string dumpName, string? vanillaOut = null, string? patchedOut = null,
+        Func<string, bool>? ignore = null)
+    {
+        var problems = new List<string>();
+        string path = Cutscenes.EventPath(eventId);
+        // The listings, unless the caller parsed a batch of events already.
+        if (vanillaOut is null || patchedOut is null)
+        {
+            (vanillaOut, var vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", eventId);
+            (patchedOut, var patchedErrors) = RunParser(files, "PARSE_EVENT", eventId);
+            problems.AddRange(vanillaErrors.Concat(patchedErrors).Select(e => $"{eventId}: parser error: {e}"));
+        }
+
+        var changes = CutsceneSkipFeature.ChangedCode(original.ReadFile(path), files[path]);
+        var lines = patchedOut.Replace("\r", "").Split('\n');
+        bool Ours(string line) => CodeOffset(line) is int at && changes.Inserted.Any(r => at >= r.Offset && at < r.Offset + r.Length);
+        // Instructions blanked out by NOPs: vanilla shows the original instruction, and the parser folds the NOPs into
+        // the next instruction's line ("00 ... 00 AEF000 D80000"), so that line loses its NOP prefix for comparing.
+        bool Blanked(string line) => CodeOffset(line) is int at && changes.Nopped.Any(n => at >= n.Original && at < n.Original + n.Length);
+        string ours = string.Join("\n", lines.Where(Ours));
+        foreach (var n in changes.Nopped)
+            if (!lines.Any(l => CodeOffset(l) == n.Offset && NopRun().IsMatch(l)))
+                problems.Add($"{eventId}: the blanked-out instruction at {n.Offset:X4} doesn't read back as NOPs");
+        string Unblanked(string line) =>
+            CodeOffset(line) is int at && changes.Nopped.Any(n => n.Offset == at) ? NopRun().Replace(line, "", 1) : line;
+        // FFXR_CROSSCHECK_DUMP=<folder> saves both listings for reading.
+        if (Environment.GetEnvironmentVariable("FFXR_CROSSCHECK_DUMP") is { Length: > 0 } dump)
+        {
+            Directory.CreateDirectory(dump);
+            File.WriteAllText(Path.Combine(dump, $"{eventId}.vanilla.txt"), vanillaOut);
+            File.WriteAllText(Path.Combine(dump, $"{eventId}.{dumpName}.txt"), patchedOut);
+        }
+
+        // Lines another feature changes on purpose (and checks in its own comparison) can be left out.
+        ignore ??= _ => false;
+        var vanilla = Normalize(vanillaOut.Replace("\r", "").Split('\n').Where(l => !Blanked(l) && !ignore(l))).ToList();
+        var patched = Normalize(lines.Where(l => !Ours(l) && !ignore(l)).Select(Unblanked)).ToList();
+        var diff = vanilla.Except(patched).Concat(patched.Except(vanilla)).ToList();
+        if (diff.Count > 0 || vanilla.Count != patched.Count)
+            problems.Add($"{eventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{diff.FirstOrDefault()}\"");
+        return (ours, problems, lines, changes);
+    }
+
+    private static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing
+        .Select(l => EventLabel().Replace(l, "").Replace(" ", ""))
+        .Select(l => JumpTarget().Replace(l, ""))
+        .Select(l => PrivateAddress().Replace(l, "priv"))
+        .Where(l => l.Length > 0);
 
     private static int? CodeOffset(string line) =>
         line.IndexOf(' ') is int space and (4 or 5) && int.TryParse(line[..space], System.Globalization.NumberStyles.HexNumber, null, out int at) ? at : null;

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using FfxRandomizer.Core.GameData;
+using FfxRandomizer.Core.GameData.Events;
 using FfxRandomizer.Core.Randomization;
 using FfxRandomizer.Core.Randomization.Features;
 using FfxRandomizer.Core.Vbf;
@@ -86,6 +87,12 @@ internal static partial class CrossCheck
                         .Select(r => eventBytes.AsSpan(codeStart + r.Offset, r.Length).IndexOf(guard) is int i and >= 0 ? codeStart + r.Offset + i : -1)
                         .First(i => i >= 0);
                     eventBytes[at + 4] ^= 1;
+                }
+                // Soft reset: the title room (23 -> 22) in the first skippable scene's event that has the watcher (always disassembled).
+                if (Cutscenes.ByEvent.Select(g => Cutscenes.EventPath(g.Key)).FirstOrDefault(p => copy.TryGetValue(p, out byte[]? b) && SoftResetFeature.HasWatcher(b)) is { } resetPath)
+                {
+                    byte[] call = Atel.Call(SoftReset.TransitionToRoom, SoftReset.TitleRoom, SoftReset.TitleSpawn);
+                    copy[resetPath][copy[resetPath].AsSpan().LastIndexOf(call) + 1] ^= 1;
                 }
                 files = copy;
             }
@@ -181,10 +188,13 @@ internal static partial class CrossCheck
                 problems.AddRange(CompareCutscenes(original, result.Settings, files));
                 checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
+            if (result.Spoiler[SoftResetFeature.Section] is not null)
+                problems.AddRange(CompareSoftReset(original, seed, files, checkedAreas, result.Spoiler[BlitzballStatsFeature.Section] is not null, result.Spoiler[SoftResetFeature.Section]));
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");
-            foreach (string p in problems.Take(20)) Console.WriteLine($"  {p}");
+            // FFXR_CROSSCHECK_SHOW=<n> shows more problems.
+            foreach (string p in problems.Take(int.TryParse(Environment.GetEnvironmentVariable("FFXR_CROSSCHECK_SHOW"), out int show) ? show : 20)) Console.WriteLine($"  {p}");
             if (problems.Count > 0) failures++;
         }
         return failures == 0 ? 0 : 1;

@@ -72,8 +72,11 @@ try
         case "cutscenes":
             return CutsceneCommands.Run(service, args[1..]);
 
+        case "softreset":
+            return SoftResetCommands.Run(service, args[1..]);
+
         default:
-            Console.Error.WriteLine($"Unknown command {command}. Use status, apply, crosscheck, restore, save or cutscenes.");
+            Console.Error.WriteLine($"Unknown command {command}. Use status, apply, crosscheck, restore, save, cutscenes or softreset.");
             return 2;
     }
 }
