@@ -53,7 +53,9 @@ internal static class SceneSaves
     /// <summary>A recipe per scene in Cutscenes.All (optionally only some areas), in story order.</summary>
     public static IEnumerable<Recipe> Recipes(VbfArchive original, string[] areas)
     {
-        var transitions = Transitions(original).ToList();
+        // Only the story's own rooms count: the test rooms warp anywhere with any GameMoment.
+        var transitions = Transitions(original).Where(t => SoftReset.IsFieldEvent(t.EventId)).ToList();
+        var writers = MomentWriters(original);
         foreach (var scene in Cutscenes.All.Where(s => areas.Length == 0 || areas.Any(p => s.EventId.StartsWith(p, StringComparison.OrdinalIgnoreCase))).OrderBy(s => s.Trigger))
         {
             if (SaveCommands.RoomTable.IdOf(scene.EventId) is not int room)
@@ -61,18 +63,37 @@ internal static class SceneSaves
                 Console.WriteLine($"No save for \"{scene.Name}\": no room id known for {scene.EventId} (FFXDataParser's room table doesn't list it).");
                 continue;
             }
+            // The GameMoment the story arrives with: the highest any room sets within the scene's range. (Just below
+            // the range's end may be a value the room never handles: bsil0300 sets itself up for 119, not 123.)
+            int moment = writers.Keys.Where(m => m >= scene.MomentFrom && m < scene.MomentBelow).DefaultIfEmpty(scene.Trigger).Max();
             var into = transitions.Where(t => t.Room == room).ToList();
-            // The entrance the previous scene's exit uses (it sets GameMoment to this scene's trigger), else the most used one.
-            var previous = into.FirstOrDefault(t => t.MomentsWritten.Contains(scene.Trigger));
+            // The entrance the room that sets that moment uses (best where it sets it just before), else the most used one.
+            var fromWriter = into.Where(t => writers.GetValueOrDefault(moment)?.Contains(t.EventId) == true)
+                .OrderByDescending(t => t.MomentsWritten.Contains(moment)).FirstOrDefault();
             int entrances = EventLocation.Read(original, scene.EventId).Entrances.Count;
             int spawn;
             string source;
-            if (previous is not null && previous.Spawn < entrances) (spawn, source) = (previous.Spawn, $"{previous.EventId} {previous.Offset:X4} (sets GameMoment {scene.Trigger})");
+            if (fromWriter is not null && fromWriter.Spawn < entrances) (spawn, source) = (fromWriter.Spawn, $"{fromWriter.EventId} {fromWriter.Offset:X4} (its room sets GameMoment {moment})");
             else if (into.Where(t => t.Spawn < entrances).GroupBy(t => t.Spawn).OrderByDescending(g => g.Count()).FirstOrDefault() is { } common)
                 (spawn, source) = (common.Key, $"most used entrance ({common.Count()} ways in)");
             else (spawn, source) = (0, "no way in found; entrance 0");
-            yield return new Recipe(scene, scene.EventId, room, spawn, scene.Trigger, source);
+            yield return new Recipe(scene, scene.EventId, room, spawn, moment, source);
         }
+    }
+
+    /// <summary>Every GameMoment value the story's rooms set, with the rooms that set it.</summary>
+    private static Dictionary<int, HashSet<string>> MomentWriters(VbfArchive original)
+    {
+        var writers = new Dictionary<int, HashSet<string>>();
+        foreach (string id in SoftReset.FieldEvents(original))
+        {
+            var tables = new ScriptTables(EventFile.Read(original.ReadFile(Cutscenes.EventPath(id))).Chunk(EventFile.ScriptChunk)!);
+            byte[] code = tables.Code.ToArray();
+            for (int at = 0; at < code.Length && AtelCode.StatementAt(code, at) is { } s; at = s.End)
+                if (AtelCode.MomentWrite(s, tables) is int m)
+                    (writers.TryGetValue(m, out var set) ? set : writers[m] = []).Add(id);
+        }
+        return writers;
     }
 
     private sealed record Transition(string EventId, int Offset, int Room, int Spawn, IReadOnlySet<int> MomentsWritten);
