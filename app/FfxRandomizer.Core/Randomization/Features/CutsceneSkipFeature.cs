@@ -133,8 +133,11 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                     yield return $"w{w:X2} j{j:X2} points at {a.JumpTarget(w, j):X4}, expected {MapCode(b.JumpTarget(w, j)):X4}.";
             for (int f = b.FunctionCount(w); f < a.FunctionCount(w); f++)
                 if (!InInserted(a.FunctionEntry(w, f))) yield return $"new function w{w:X2}::f{f:X2} doesn't start in inserted code.";
+            // New jumps go to inserted code, or to an original instruction (a scene's exit, or where the scene carries
+            // on after an inserted check).
             for (int j = b.JumpCount(w); j < a.JumpCount(w); j++)
-                if (!InInserted(a.JumpTarget(w, j))) yield return $"new jump w{w:X2} j{j:X2} doesn't point into inserted code.";
+                if (!InInserted(a.JumpTarget(w, j)) && !AtOriginalInstruction(a.JumpTarget(w, j)))
+                    yield return $"new jump w{w:X2} j{j:X2} doesn't point into inserted code or at an original instruction.";
         }
 
         // Everything from the shared data to the first worker table moved by one amount, with pointers moved by it too.
@@ -164,6 +167,14 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         }
 
         bool InInserted(int offset) => inserts.Any(i => offset >= MapCode(i.At) && offset < MapCode(i.At) + i.Length);
+
+        bool AtOriginalInstruction(int offset)
+        {
+            int was = offset - inserts.Where(i => MapCode(i.At) + i.Length <= offset).Sum(i => i.Length);
+            if (was < 0 || was >= originalCode.Length || MapCode(was + 1) - 1 != offset) return false; // where original byte "was" now sits
+            for (int at = 0; at <= was; at += originalCode[at] >= 0x80 ? 3 : 1) if (at == was) return true;
+            return false;
+        }
     }
 
     /// <summary>
@@ -243,6 +254,11 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 if (boundary[si]) (bestI, bestJ) = (si, sj);
             }
             (i, j) = (bestI, bestJ);
+            if (!boundary[i])
+            {
+                problem = $"code was inserted inside the original instruction at {Array.FindLastIndex(boundary, i, b => b):X4}.";
+                return inserts;
+            }
             inserts.Add((i, found));
             j += found;
             floor = i + 1;
@@ -258,6 +274,12 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         if (countA < countB + added) yield return $"has {countA} strings, expected at least {countB + added}.";
         for (int s = 0; s < countB * 2; s++)
         {
+            // An empty slot (offset 0) stays empty.
+            if ((Header(before, s) & 0xFFFF) == 0)
+            {
+                if (Header(after, s) != Header(before, s)) { yield return $"empty string slot {s / 2} changed."; yield break; }
+                continue;
+            }
             if (!StringAt(before, s).SequenceEqual(StringAt(after, s))) { yield return $"string {s / 2} changed."; yield break; }
             if ((Header(before, s) & 0xFFFF0000) != (Header(after, s) & 0xFFFF0000)) { yield return $"string {s / 2} lost its flags."; yield break; }
         }

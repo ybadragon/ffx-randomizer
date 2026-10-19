@@ -392,8 +392,8 @@ public static class Cutscenes
             // Stop the watcher when the scene reaches its exit.
             script.InsertCode(script.JumpTarget(scene.Exit.Worker, exitJump), Atel.Run(2, hostWorker, stop, awaitEnd: false));
             // Start it with the scene's first instruction, only when the scene plays (the function may run at other
-            // moments too).
-            InsertGuardedRun(script, scene, entry, Atel.Run(1, hostWorker, watchFunction, awaitEnd: false));
+            // moments too). The entry is read again: the stop moves it when the exit comes first in the code.
+            InsertGuardedRun(script, scene, script.FunctionEntry(scene.SceneWorker, sceneFunction), Atel.Run(1, hostWorker, watchFunction, awaitEnd: false));
         }
     }
 

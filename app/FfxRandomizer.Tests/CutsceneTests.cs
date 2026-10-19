@@ -45,9 +45,33 @@ public class CutsceneTests
 
         var result = RandomizerEngine.Run(original, Settings(mode, button), new Seed("cutscenes"));
         Assert.Empty(result.Problems);
-        Assert.Equal(mode == "hold" ? 9 : 1, result.Files.Count); // the event, plus every language's text for the prompt
+        // Each event, plus every language's text for its prompts.
+        Assert.Equal(Cutscenes.ByEvent.Count() * (mode == "hold" ? 9 : 1), result.Files.Count);
         foreach (var (path, bytes) in result.Files)
             Assert.Equal(VbfArchive.BlocksFor((ulong)original.ReadFile(path).Length), VbfArchive.BlocksFor((ulong)bytes.Length));
+    }
+
+    [Fact]
+    public void Every_scene_passes_the_skip_safety_audit()
+    {
+        if (Original.Value is not { } original) return;
+
+        foreach (var scene in Cutscenes.All)
+        {
+            var audit = Cutscenes.AuditOf(original, scene);
+            Assert.True(audit.Safe, $"{scene.EventId} {scene.Name}: {string.Join("; ", audit.Problems())}");
+        }
+    }
+
+    [Fact]
+    public void A_scene_whose_skip_would_lose_progress_is_refused()
+    {
+        if (Original.Value is not { } original) return;
+
+        // znkd0801's GameMoment 12 path writes a computed save variable, which a skip can't replay.
+        var scene = Cutscenes.All.Single(s => s.EventId == "znkd0801") with { MomentFrom = 12, MomentBelow = 13 };
+        Assert.False(Cutscenes.AuditOf(original, scene).Safe);
+        Assert.Throws<UnsafeSkipException>(() => Cutscenes.Build(original, scene, Cutscenes.Always, SkipButtons.Default));
     }
 
     [Fact]

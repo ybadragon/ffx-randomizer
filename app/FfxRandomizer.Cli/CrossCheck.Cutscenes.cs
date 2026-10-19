@@ -21,12 +21,13 @@ internal static partial class CrossCheck
     {
         string mode = CutsceneSkipFeature.Mode(settings);
         var button = CutsceneSkipFeature.Button(settings);
-        foreach (var scene in Cutscenes.All)
+        foreach (var group in Cutscenes.ByEvent)
         {
-            string path = Cutscenes.EventPath(scene.EventId);
-            var (vanillaOut, vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", scene.EventId);
-            var (patchedOut, patchedErrors) = RunParser(files, "PARSE_EVENT", scene.EventId);
-            foreach (string e in vanillaErrors.Concat(patchedErrors)) yield return $"{scene.EventId}: parser error: {e}";
+            string eventId = group.Key;
+            string path = Cutscenes.EventPath(eventId);
+            var (vanillaOut, vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", eventId);
+            var (patchedOut, patchedErrors) = RunParser(files, "PARSE_EVENT", eventId);
+            foreach (string e in vanillaErrors.Concat(patchedErrors)) yield return $"{eventId}: parser error: {e}";
 
             var changes = CutsceneSkipFeature.ChangedCode(original.ReadFile(path), files[path]);
             var lines = patchedOut.Replace("\r", "").Split('\n');
@@ -37,60 +38,73 @@ internal static partial class CrossCheck
             string ours = string.Join("\n", lines.Where(Ours));
             foreach (var n in changes.Nopped)
                 if (!lines.Any(l => CodeOffset(l) == n.Offset && NopRun().IsMatch(l)))
-                    yield return $"{scene.EventId}: the blanked-out instruction at {n.Offset:X4} doesn't read back as NOPs";
+                    yield return $"{eventId}: the blanked-out instruction at {n.Offset:X4} doesn't read back as NOPs";
             string Unblanked(string line) =>
                 CodeOffset(line) is int at && changes.Nopped.Any(n => n.Offset == at) ? NopRun().Replace(line, "", 1) : line;
             // FFXR_CROSSCHECK_DUMP=<folder> saves both listings for reading.
             if (Environment.GetEnvironmentVariable("FFXR_CROSSCHECK_DUMP") is { Length: > 0 } dump)
             {
                 Directory.CreateDirectory(dump);
-                File.WriteAllText(Path.Combine(dump, $"{scene.EventId}.vanilla.txt"), vanillaOut);
-                File.WriteAllText(Path.Combine(dump, $"{scene.EventId}.{mode}.txt"), patchedOut);
+                File.WriteAllText(Path.Combine(dump, $"{eventId}.vanilla.txt"), vanillaOut);
+                File.WriteAllText(Path.Combine(dump, $"{eventId}.{mode}.txt"), patchedOut);
             }
 
             var vanilla = Normalize(vanillaOut.Replace("\r", "").Split('\n').Where(l => !Blanked(l))).ToList();
             var patched = Normalize(lines.Where(l => !Ours(l)).Select(Unblanked)).ToList();
             var diff = vanilla.Except(patched).Concat(patched.Except(vanilla)).ToList();
             if (diff.Count > 0 || vanilla.Count != patched.Count)
-                yield return $"{scene.EventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{diff.FirstOrDefault()}\"";
+                yield return $"{eventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{diff.FirstOrDefault()}\"";
 
-            string guard = $"(GameMoment < {scene.MomentBelow} [{scene.MomentBelow:X2}h]) -> j{scene.Exit.Jump:X2}";
-            if (!ours.Contains(guard, StringComparison.Ordinal)) yield return $"{scene.EventId}: no \"{guard}\" in the inserted code";
+            // Each scene's first-visit guard (both bounds when it has a lower one), wherever the mode puts it.
+            foreach (var scene in group)
+                foreach (string bound in scene.MomentFrom > 0
+                    ? new[] { $"GameMoment >= {scene.MomentFrom} [{scene.MomentFrom:X2}h]", $"GameMoment < {scene.MomentBelow} [{scene.MomentBelow:X2}h]" }
+                    : [$"GameMoment < {scene.MomentBelow} [{scene.MomentBelow:X2}h]"])
+                    if (!ours.Contains(bound, StringComparison.Ordinal)) yield return $"{eventId} {scene.Name}: no \"{bound}\" in the inserted code";
             if (mode != Cutscenes.Hold) continue;
 
-            string window = $"msgWindow={scene.MessageWindow} [{scene.MessageWindow:X2}h]";
-            foreach (string expected in new[]
-            {
-                $"call Common.setMessageBoxTransparent [0066h]({window}, transparent=false",
-                $"call Common.displayFieldString [0064h]({window}",
-                $"call Common.?closeMessage [006Bh]({window})",
-                $"run w{scene.SceneWorker:X2}::f{scene.BuiltIn?.SkipFunction ?? 0:X2} at level 2, await end",
-                "Hold ",
-            })
-                if (!ours.Contains(expected, StringComparison.Ordinal)) yield return $"{scene.EventId}: no \"{expected}\" in the inserted code";
+            // A watcher (built-in or added) shows the intro and the bar, tests the button through the intro and while
+            // held, and runs the skip above the scene; a start check (scenes that stay in the room) only shows the bar
+            // while the button is held as the scene starts.
+            var watched = group.Where(s => !s.StaysInRoom).ToList();
+            var started = group.Where(s => s.StaysInRoom).ToList();
+            string window = $"msgWindow={group.First().MessageWindow} [{group.First().MessageWindow:X2}h]";
+            var expectedLines = new List<string> { $"call Common.setMessageBoxTransparent [0066h]({window}, transparent=false", $"call Common.displayFieldString [0064h]({window}", $"call Common.?closeMessage [006Bh]({window})", "Hold " };
+            foreach (var scene in watched)
+                expectedLines.Add(scene.BuiltIn is { } b
+                    ? $"run w{scene.SceneWorker:X2}::f{b.SkipFunction:X2} at level 2, await end"
+                    : $"run w{scene.Exit.Worker:X2}::f");
+            foreach (string expected in expectedLines)
+                if (!ours.Contains(expected, StringComparison.Ordinal)) yield return $"{eventId}: no \"{expected}\" in the inserted code";
+            foreach (var scene in watched.Where(s => s.BuiltIn is null))
+                if (!Regex.IsMatch(ours, $@"run w{scene.Exit.Worker:X2}::f[0-9A-F]{{2}} at level {scene.SkipLevel}, await end"))
+                    yield return $"{eventId} {scene.Name}: no skip run on w{scene.Exit.Worker:X2} at level {scene.SkipLevel}";
+
+            int polls = Cutscenes.HoldFrames / Cutscenes.PollFrames;
             int prompts = PromptLine().Matches(ours).Count;
-            if (prompts != Cutscenes.Steps + 1) yield return $"{scene.EventId}: the parser shows {prompts} hold-to-skip prompts, expected {Cutscenes.Steps + 1}";
-            // The hold test must be the "button is down" call on the chosen button: during the intro, then once to start
-            // and once per poll while held; never the press-only 0x0046.
-            int expectedTests = Cutscenes.IntroFrames / Cutscenes.IntroPollFrames + 1 + Cutscenes.HoldFrames / Cutscenes.PollFrames;
+            if (prompts != group.Count() * (Cutscenes.Steps + 1)) yield return $"{eventId}: the parser shows {prompts} hold-to-skip prompts, expected {group.Count() * (Cutscenes.Steps + 1)}";
+            // The hold test must be the "button is down" call on the chosen button, never the press-only 0x0046.
+            int expectedTests = watched.Count * (Cutscenes.IntroFrames / Cutscenes.IntroPollFrames + 1 + polls) + started.Count * (1 + polls);
             int downTests = DownTest().Matches(ours).Count(m => m.Groups[1].Value == $"{button.Index:X2}");
             if (downTests != expectedTests)
-                yield return $"{scene.EventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {expectedTests}";
-            if (ours.Contains("[0046h]", StringComparison.Ordinal)) yield return $"{scene.EventId}: the watcher uses the press-only 0x0046 test";
-            // Shown for the intro, shown with an empty bar, then redrawn once per step; closed and waited for after the
-            // intro, before the skip and on release.
+                yield return $"{eventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {expectedTests}";
+            if (ours.Contains("[0046h]", StringComparison.Ordinal)) yield return $"{eventId}: the skip uses the press-only 0x0046 test";
+            // A watcher shows the intro, the empty bar and one redraw per step, and closes the prompt after the intro,
+            // before the skip and on release; a start check shows the bar and closes it on skip or release.
             int shows = ours.Split('\n').Count(l => l.Contains($"?showMessage [006Ah]({window}", StringComparison.Ordinal));
-            if (shows != Cutscenes.Steps + 2) yield return $"{scene.EventId}: the prompt is shown {shows} times, expected {Cutscenes.Steps + 2}";
+            int expectedShows = watched.Count * (Cutscenes.Steps + 2) + started.Count * (Cutscenes.Steps + 1);
+            if (shows != expectedShows) yield return $"{eventId}: the prompt is shown {shows} times, expected {expectedShows}";
             int waits = ours.Split('\n').Count(l => l.Contains($"waitForText [0084h]({window}, p2=1", StringComparison.Ordinal));
-            if (waits != 3) yield return $"{scene.EventId}: {waits} waits for the prompt to close, expected 3 (intro, skip and release)";
-            if (!IntroLine().IsMatch(ours)) yield return $"{scene.EventId}: no intro prompt \"Hold ... to skip\"";
-            // The watcher starts with the scene: its first instruction is the start of the host's watch function. Code
-            // inserted at the scene's entry lands at the entry, so only earlier inserts move it.
-            int entry = changes.Inserted.Aggregate(scene.SceneStart.Offset, (at, r) => r.Offset < at ? at + r.Length : at);
-            var first = lines.FirstOrDefault(l => CodeOffset(l) == entry);
-            string start = $"run w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}::f";
-            if (first is null || !first.Contains(start, StringComparison.Ordinal) || !first.Contains("at level 1;", StringComparison.Ordinal))
-                yield return $"{scene.EventId}: the scene doesn't start the watcher at its first instruction (\"{first?.Trim()}\")";
+            if (waits != watched.Count * 3 + started.Count * 2) yield return $"{eventId}: {waits} waits for the prompt to close, expected {watched.Count * 3 + started.Count * 2}";
+            if (watched.Count > 0 && !IntroLine().IsMatch(ours)) yield return $"{eventId}: no intro prompt \"Hold ... to skip\"";
+
+            // The inserted code starts each scene's watcher (on its host, at level 1).
+            foreach (var scene in watched)
+            {
+                string start = $"run w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}::f";
+                if (!ours.Split('\n').Any(l => l.Contains(start, StringComparison.Ordinal) && l.Contains("at level 1;", StringComparison.Ordinal)))
+                    yield return $"{eventId} {scene.Name}: nothing starts the watcher on w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}";
+            }
         }
 
         static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing
@@ -101,13 +115,13 @@ internal static partial class CrossCheck
     }
 
     private static int? CodeOffset(string line) =>
-        line.Length >= 5 && line[4] == ' ' && int.TryParse(line[..4], System.Globalization.NumberStyles.HexNumber, null, out int at) ? at : null;
+        line.IndexOf(' ') is int space and (4 or 5) && int.TryParse(line[..space], System.Globalization.NumberStyles.HexNumber, null, out int at) ? at : null;
 
     /// <summary>A line's code offset and its label column (function and jump names, which move with inserted code).</summary>
-    [GeneratedRegex(@"^[0-9A-F]{4}\s+(\S+:)?")]
+    [GeneratedRegex(@"^[0-9A-F]{4,5}\s+(\S+:)?")]
     private static partial Regex EventLabel();
 
-    [GeneratedRegex(@"\([0-9A-F]{4}\)")]
+    [GeneratedRegex(@"\([0-9A-F]{4,5}\)")]
     private static partial Regex JumpTarget();
 
     /// <summary>
@@ -124,7 +138,7 @@ internal static partial class CrossCheck
     private static partial Regex PromptLine();
 
     /// <summary>A run of NOPs as the parser prints it, after the offset and label columns.</summary>
-    [GeneratedRegex(@"(?<=^[0-9A-F]{4}\s+(\S+:)?\s*)00 (\.\.\. 00 |00 )*")]
+    [GeneratedRegex(@"(?<=^[0-9A-F]{4,5}\s+(\S+:)?\s*)00 (\.\.\. 00 |00 )*")]
     private static partial Regex NopRun();
 
     [GeneratedRegex(@"string=""\{TIME:00\}Hold .*? to skip"" \[")]
