@@ -38,7 +38,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Aeons | Base stats, stat growth, power-up items |
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
-| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers only the opening Zanarkand Ruins campfire scene so far |
+| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers Dream Zanarkand (the campfire, stadium, highway and Sinspawn scenes) and 9 Besaid scenes so far; later visits play as usual |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.
@@ -104,6 +104,9 @@ ffxr save info <file>...                  # story progress, room, spawn, gil, pl
 ffxr save jump --from <file> --event <id> [--spawn N] [--moment N] (--slot N | --out <file>)
 ffxr save list                            # test saves this tool wrote into the game's save folder
 ffxr save delete --slot N
+ffxr cutscenes find --area znkd,bsil [--emit] # cutscenes found in events, their skip-safety audit and what was left out
+ffxr cutscenes audit [--area <prefix>]       # the skip-safety audit of every scene "Skip cutscenes" covers
+ffxr cutscenes saves --from <file> (--slots A-B | --out <folder>)  # a save just before each covered scene
 ```
 
 An option is a toggle id (`rewards`), a choice (`gridmode=shuffle`) or, for `crosscheck`, `-id` to switch a default off (`-sane`).

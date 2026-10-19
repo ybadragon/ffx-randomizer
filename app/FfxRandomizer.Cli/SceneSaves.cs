@@ -56,7 +56,11 @@ internal static class SceneSaves
         var transitions = Transitions(original).ToList();
         foreach (var scene in Cutscenes.All.Where(s => areas.Length == 0 || areas.Any(p => s.EventId.StartsWith(p, StringComparison.OrdinalIgnoreCase))).OrderBy(s => s.Trigger))
         {
-            int room = SaveCommands.RoomTable.IdOf(scene.EventId) ?? throw new InvalidOperationException($"No room id known for {scene.EventId} (set FFXDATAPARSER_DIR).");
+            if (SaveCommands.RoomTable.IdOf(scene.EventId) is not int room)
+            {
+                Console.WriteLine($"No save for \"{scene.Name}\": no room id known for {scene.EventId} (FFXDataParser's room table doesn't list it).");
+                continue;
+            }
             var into = transitions.Where(t => t.Room == room).ToList();
             // The entrance the previous scene's exit uses (it sets GameMoment to this scene's trigger), else the most used one.
             var previous = into.FirstOrDefault(t => t.MomentsWritten.Contains(scene.Trigger));
