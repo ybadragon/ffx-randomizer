@@ -7,6 +7,7 @@ using FfxRandomizer.Core.Storage;
 //   ffxr status
 //   ffxr apply [--seed <text>] <option-id> | <group>=<choice>...     e.g. ffxr apply tidus pstats=random
 //   ffxr restore
+//   ffxr save info <file> | ffxr save jump ...       see SaveCommands.cs
 
 var game = GameInstall.FindSteamInstall();
 if (game is null)
@@ -64,8 +65,11 @@ try
             Console.WriteLine(service.Patcher.Restore() ? "Original game restored." : "The game wasn't randomized; nothing to restore.");
             return 0;
 
+        case "save":
+            return SaveCommands.Run(service, args[1..]);
+
         default:
-            Console.Error.WriteLine($"Unknown command {command}. Use status, apply or restore.");
+            Console.Error.WriteLine($"Unknown command {command}. Use status, apply, crosscheck, restore or save.");
             return 2;
     }
 }

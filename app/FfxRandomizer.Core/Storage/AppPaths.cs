@@ -15,4 +15,5 @@ public sealed class AppPaths(string root)
     public string PresetsPath => Path.Combine(Root, "presets.json");
     public string HistoryPath => Path.Combine(Root, "history.json");
     public string SpoilerDirectory => Path.Combine(Root, "spoilers");
+    public string TestSavesPath => Path.Combine(Root, "test-saves.json");
 }

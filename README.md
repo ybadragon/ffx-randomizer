@@ -100,11 +100,20 @@ ffxr status                               # where the game is and whether it's r
 ffxr apply [--seed X] <option>...         # randomize without the app, e.g. ffxr apply rewards drops estats=random
 ffxr restore
 ffxr crosscheck [--seeds N] [--sabotage] <option>...
+ffxr save info <file>...                  # story progress, room, spawn, gil, play time, CRC check
+ffxr save jump --from <file> --event <id> [--spawn N] [--moment N] (--slot N | --out <file>)
+ffxr save list                            # test saves this tool wrote into the game's save folder
+ffxr save delete --slot N
 ```
 
 An option is a toggle id (`rewards`), a choice (`gridmode=shuffle`) or, for `crosscheck`, `-id` to switch a default off (`-sane`).
 
 `crosscheck` randomizes in memory only and never touches the game. It decodes the output with [FFXDataParser](https://github.com/Karifean/FFXDataParser), an independent parser, and compares every area with the spoiler: enemies, battles, chests, shops, gear, party and aeon stats, the Sphere Grid and Blitzball players. `--sabotage` deliberately corrupts a few values to show the check catches them. It needs Java, a local build of FFXDataParser (`FFXDATAPARSER_DIR`, default `C:\Github\Personal\FFXDataParser`), and an extracted `ffx_ps2` folder (`FFXR_VANILLA_ROOT`). `tools/ffxdataparser.ps1` runs the parser on its own.
+
+`save jump` copies a save and moves it to another field (an event id such as `ptkl1300`), so a scene can be tested without playing up to it. The game places the player by the save's saved room and spawn point; the load menu shows the area, and lists saves by the file's modified time. Saves sync through Steam Cloud (and OneDrive when Documents is redirected), so:
+- `--slot` writes only to a free slot, never while the game is running, and stamps each new file a second newer than the newest save so the menu lists them in order.
+- Each slot written is recorded with its hash in `%LOCALAPPDATA%\FFX Randomizer\test-saves.json`. `save delete` removes only those, and only if the file is unchanged; a player's own saves are never touched.
+- Room ids come from a local FFXDataParser checkout (`FFXDATAPARSER_DIR`), since the game keeps that table in code; `--room N` overrides it. `--variant a|b|c|d` writes only some location fields, for diagnosing; the default writes all of them.
 
 The original C++ FFXRando source is kept in `src/` as the reference for porting.
 
