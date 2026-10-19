@@ -16,8 +16,48 @@ namespace FfxRandomizer.Core.GameData;
 /// </summary>
 public static partial class SoftReset
 {
-    /// <summary>L1, R1 and Start, as the 0x004C "button is down" test numbers them.</summary>
-    public static readonly int[] Buttons = [2, 3, 11];
+    /// <summary>
+    /// The combos offered: button ids joined by "+" in the skip list's order (see <see cref="ComboId"/>), the first the
+    /// default. A recorded one may be any 1-3 buttons.
+    /// </summary>
+    public static IReadOnlyList<string> Combos { get; } = ["l3+r3", "l1+r1+start", "select+l1+r1", "select+l2+r2", "select+start"];
+
+    public const int MaxComboButtons = 3;
+
+    /// <summary>The buttons of a combo id; the default combo's for an id that isn't 1-3 known, different buttons.</summary>
+    public static IReadOnlyList<SkipButton> ComboButtons(string? combo)
+    {
+        var buttons = (combo ?? "").Split('+', StringSplitOptions.RemoveEmptyEntries)
+            .Select(id => SkipButtons.All.FirstOrDefault(b => b.Id == id)).ToList();
+        if (buttons.Count is 0 or > MaxComboButtons || buttons.Any(b => b is null) || buttons.Distinct().Count() != buttons.Count)
+            return ComboButtons(Combos[0]);
+        return buttons!;
+    }
+
+    /// <summary>A combo id for buttons, in the skip list's order so the same buttons always make the same id.</summary>
+    public static string ComboId(IEnumerable<SkipButton> buttons) =>
+        string.Join("+", SkipButtons.All.Where(b => buttons.Any(x => x.Id == b.Id)).Select(b => b.Id));
+
+    /// <summary>Whether an id names 1-3 different known buttons, written as <see cref="ComboId"/> writes them.</summary>
+    public static bool IsCombo(string id)
+    {
+        var buttons = id.Split('+').Select(b => SkipButtons.All.FirstOrDefault(x => x.Id == b)).ToList();
+        return buttons.Count is >= 1 and <= MaxComboButtons && buttons.All(b => b is not null) && ComboId(buttons!) == id;
+    }
+
+    /// <summary>A combo's game button numbers (the default combo's for null or an invalid id).</summary>
+    public static int[] ComboIndexes(string? combo) => [.. ComboButtons(combo).Select(b => b.Index)];
+
+    public static string ComboLabel(string? combo) => string.Join(" + ", ComboButtons(combo).Select(b => b.Label));
+
+    /// <summary>
+    /// A warning when holding the combo during a cutscene would also fill the cutscene skip's bar: hold-to-skip is on and
+    /// its button is in the combo.
+    /// </summary>
+    public static string? OverlapWarning(string? combo, string cutsceneMode, SkipButton skipButton) =>
+        cutsceneMode == Cutscenes.Hold && ComboButtons(combo).Any(b => b.Id == skipButton.Id)
+            ? $"{skipButton.Label} is also the cutscene skip button, so holding this combo during a scene may skip the scene before it resets."
+            : null;
 
     public const int PollFrames = 2, HoldFrames = 60, FadeFrames = 15, TitleRoom = 23, TitleSpawn = 0;
     public const int SetRoomFadeoutTime = 0x00BB, SetRoomFadeoutMode = 0x00BC, TransitionToRoom = 0x0011, FadeBlack = 0;
@@ -106,12 +146,14 @@ public static partial class SoftReset
     }
 
     /// <summary>
-    /// The watcher, looping forever: poll every <see cref="PollFrames"/> frames until all three buttons are down, then
-    /// keep polling for <see cref="HoldFrames"/> frames (any release starts over), then fade and go to the title.
+    /// The watcher, looping forever: poll every <see cref="PollFrames"/> frames until all the combo's buttons (game button
+    /// numbers) are down, then keep polling for <see cref="HoldFrames"/> frames (any release starts over), then fade and
+    /// go to the title.
     /// </summary>
-    public static byte[] WatcherCode(int loopJump)
+    public static byte[] WatcherCode(int loopJump, IReadOnlyList<int> buttons)
     {
-        byte[] allDown = [.. Atel.IsDown(Buttons[0]), .. Atel.IsDown(Buttons[1]), Atel.LogicalAnd, .. Atel.IsDown(Buttons[2]), Atel.LogicalAnd];
+        var allDown = new List<byte>(Atel.IsDown(buttons[0]));
+        foreach (int button in buttons.Skip(1)) allDown.AddRange([.. Atel.IsDown(button), Atel.LogicalAnd]);
         byte[] poll = [.. Atel.Call(Atel.Wait, PollFrames), .. allDown, .. Atel.GotoUnless(loopJump)];
         var code = new List<byte>();
         for (int i = 0; i <= HoldFrames / PollFrames; i++) code.AddRange(poll);
@@ -128,7 +170,7 @@ public static partial class SoftReset
     /// Adds the watcher to an event file (original or already edited by other features); returns the new bytes, or null
     /// and why it was left alone.
     /// </summary>
-    public static (byte[]? Bytes, string? Reason) Apply(byte[] ebp, IReadOnlySet<int> busy)
+    public static (byte[]? Bytes, string? Reason) Apply(byte[] ebp, IReadOnlySet<int> busy, IReadOnlyList<int> buttons)
     {
         var file = EventFile.Read(ebp);
         byte[] chunk = file.Chunk(EventFile.ScriptChunk)!;
@@ -138,7 +180,7 @@ public static partial class SoftReset
         {
             // An unused Scenario worker: its main becomes the watcher.
             int loop = script.JumpCount(w);
-            int start = script.AppendCode(WatcherCode(loop));
+            int start = script.AppendCode(WatcherCode(loop, buttons));
             script.AddJump(w, start);
             script.SetFunctionEntry(w, MainFunction, start);
         }
@@ -151,7 +193,7 @@ public static partial class SoftReset
             if (risk is not null) return (null, $"{reason}; can't add a worker: {risk}");
             foreach (var (offset, op, operand) in patches) script.SetOperand(offset, op, operand);
             int init = script.AppendCode([Atel.Return]);
-            int main = script.AppendCode(WatcherCode(0));
+            int main = script.AppendCode(WatcherCode(0, buttons));
             script.AddWorker(index, Scenario, [init, main], [main]);
         }
         file.SetChunk(EventFile.ScriptChunk, script.ToBytes());
@@ -244,7 +286,7 @@ public static partial class SoftReset
     /// worker the same, those after it one place up; the code the same except operands that name a worker after it, each
     /// now one more; the header's counts one more; the shared data and the other chunks unchanged.
     /// </summary>
-    public static IEnumerable<string> CheckOwnWorker(byte[] beforeEbp, byte[] afterEbp)
+    public static IEnumerable<string> CheckOwnWorker(byte[] beforeEbp, byte[] afterEbp, IReadOnlyList<int> buttons)
     {
         var beforeFile = EventFile.Read(beforeEbp);
         var afterFile = EventFile.Read(afterEbp);
@@ -258,7 +300,7 @@ public static partial class SoftReset
         if (a.WorkerCount != b.WorkerCount + 1) { yield return "the worker count isn't one more."; yield break; }
 
         int codeLength = b.Editor.CodeLength, init = codeLength, main = codeLength + 1;
-        byte[] watcher = WatcherCode(0);
+        byte[] watcher = WatcherCode(0, buttons);
         int k = Enumerable.Range(0, a.WorkerCount).FirstOrDefault(w => a.WorkerType(w) == Scenario && a.Editor.FunctionCount(w) == 2
             && a.Editor.JumpCount(w) == 1 && a.Editor.FunctionEntry(w, 0) == init && a.Editor.FunctionEntry(w, 1) == main && a.Editor.JumpTarget(w, 0) == main, -1);
         if (k < 0) { yield return "no added Scenario worker with the watcher as its main."; yield break; }
@@ -351,11 +393,11 @@ public static partial class SoftReset
     /// An event file (at <paramref name="path"/>, as other features left it) with the watcher added, exactly as the soft
     /// reset feature adds it; unchanged for events it leaves alone.
     /// </summary>
-    public static byte[] WithWatcher(string path, byte[] ebp)
+    public static byte[] WithWatcher(string path, byte[] ebp, IReadOnlyList<int> buttons)
     {
         string id = Path.GetFileNameWithoutExtension(path);
         if (!IsFieldEvent(id) || !path.Equals(Cutscenes.EventPath(id), StringComparison.OrdinalIgnoreCase)) return ebp;
-        return Apply(ebp, CutsceneWorkers(id)).Bytes ?? ebp;
+        return Apply(ebp, CutsceneWorkers(id), buttons).Bytes ?? ebp;
     }
 
     /// <summary>Workers the cutscene skip uses in an event (whatever mode it runs in).</summary>

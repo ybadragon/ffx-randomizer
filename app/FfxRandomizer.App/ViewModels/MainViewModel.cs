@@ -4,8 +4,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using FfxRandomizer.Core;
 using FfxRandomizer.Core.Game;
+using FfxRandomizer.Core.GameData;
 using FfxRandomizer.Core.Patching;
 using FfxRandomizer.Core.Randomization;
+using FfxRandomizer.Core.Randomization.Features;
 using FfxRandomizer.Core.Storage;
 using FfxRandomizer.Core.Updates;
 using Microsoft.Win32;
@@ -135,6 +137,13 @@ public sealed partial class MainViewModel : ObservableObject
             int count = tab.Groups.Count(g => settings.IsActive(g.Group));
             tab.CountLabel = count > 0 ? $"{count} on" : null;
         }
+        // The soft reset combo and the cutscene skip button warn when holding the combo would also skip a scene.
+        string? overlap = SoftResetFeature.On(settings)
+            ? SoftReset.OverlapWarning(SoftResetFeature.Combo(settings), CutsceneSkipFeature.Mode(settings), CutsceneSkipFeature.Button(settings))
+            : null;
+        foreach (var dropdown in _groups.Select(g => g.Dropdown).OfType<DropdownViewModel>()
+                     .Where(d => d.Id is DropdownViewModel.SkipButtonId or DropdownViewModel.ResetComboId))
+            dropdown.ContextWarning = overlap;
         IsModified = LoadedPreset is not null && _baseline is not null && !settings.SameAs(_baseline);
         _appSettings.LastSettings = settings;
         SaveAppSettings();

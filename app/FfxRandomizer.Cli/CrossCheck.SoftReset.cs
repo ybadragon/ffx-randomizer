@@ -14,7 +14,7 @@ internal static partial class CrossCheck
     /// Start with the "button is down" call once per poll, then fading to black and going to room 23 (test20, the title)
     /// at spawn 0.
     /// </summary>
-    private static IEnumerable<string> CompareSoftReset(VbfArchive original, Seed seed, IReadOnlyDictionary<string, byte[]> files, List<string> checkedAreas, bool blitzball, System.Text.Json.Nodes.JsonNode? spoiler)
+    private static IEnumerable<string> CompareSoftReset(VbfArchive original, Seed seed, IReadOnlyDictionary<string, byte[]> files, List<string> checkedAreas, bool blitzball, System.Text.Json.Nodes.JsonNode? spoiler, int[] buttons)
     {
         // The events the feature says it covered (not the ones that look covered, so a broken watcher is still checked).
         var leftOut = (spoiler as System.Text.Json.Nodes.JsonArray)?.SelectMany(e => e?["leftOut"]?.AsArray() ?? []).Select(e => (string?)e?["event"]).ToHashSet() ?? [];
@@ -49,7 +49,7 @@ internal static partial class CrossCheck
             var lines = ours.Split('\n');
             if (!lines.Any(l => MainLabel().IsMatch(l) && l.Contains("call Common.wait [0000h](frames=2 [02h])", StringComparison.Ordinal)))
                 yield return $"{id}: no worker's main starts with the watcher's 2-frame wait";
-            foreach (int button in SoftReset.Buttons)
+            foreach (int button in buttons)
             {
                 int tests = DownTest().Matches(ours).Count(m => m.Groups[1].Value == $"{button:X2}");
                 // Another feature's code (a cutscene skip on the same button) may test it too.

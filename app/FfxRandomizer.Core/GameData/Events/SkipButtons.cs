@@ -8,8 +8,9 @@ public sealed record SkipButton(string Id, int Index, string Label, string Name,
 
 /// <summary>
 /// The buttons offered for skipping, PlayStation names with their Xbox equivalent. Button numbers from FFXDataParser's
-/// controllerButton enum (ScriptConstants); icon codes from its text control code table (StringHelper.getControllerInput),
-/// where L2 and Start aren't known, so those show their name instead.
+/// controllerButton enum (ScriptConstants), which leaves 9 and 10 unnamed (L3 and R3, below); icon codes from its text
+/// control code table (StringHelper.getControllerInput), where L2, Start, L3 and R3 aren't known, so those show their
+/// name instead.
 /// </summary>
 public static class SkipButtons
 {
@@ -25,6 +26,10 @@ public static class SkipButtons
         new("triangle", 4, "Triangle (Y)", "TRIANGLE", 0x30),
         new("square", 7, "Square (X)", "SQUARE", 0x33),
         new("start", 11, "Start", "START", null),
+        // L3 and R3 fill the gaps at 9 and 10 the PS2 pad's button order leaves (the game reads 10 in bltz0002's button
+        // sequence); not yet confirmed in-game.
+        new("l3", 9, "L3 (left stick click)", "L3", null),
+        new("r3", 10, "R3 (right stick click)", "R3", null),
         new("x", 5, "X (A)", "X", 0x31, AdvancesDialogue: true),
         new("circle", 6, "Circle (B)", "CIRCLE", 0x32, AdvancesDialogue: true),
     ];
@@ -33,7 +38,8 @@ public static class SkipButtons
 
     /// <summary>
     /// The game button for an Xbox controller button, with the standard layout: A=X, B=Circle, X=Square, Y=Triangle,
-    /// LB=L1, RB=R1, LT=L2, RT=R2, Back=Select, Start=Start. Null for buttons that can't skip (sticks, d-pad, guide).
+    /// LB=L1, RB=R1, LT=L2, RT=R2, Back=Select, Start=Start, stick clicks L3 and R3. Null for buttons that can't skip (d-pad,
+    /// guide).
     /// </summary>
     public static SkipButton? FromXbox(string xboxButton) => xboxButton switch
     {
@@ -47,6 +53,8 @@ public static class SkipButtons
         "RT" => ById("r2"),
         "Back" or "View" => ById("select"),
         "Start" or "Menu" => ById("start"),
+        "LeftThumb" => ById("l3"),
+        "RightThumb" => ById("r3"),
         _ => null,
     };
 }

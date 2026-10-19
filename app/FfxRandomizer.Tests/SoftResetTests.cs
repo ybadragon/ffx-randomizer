@@ -15,6 +15,9 @@ public class SoftResetTests
     private static readonly Lazy<VbfArchive?> Original = new(() =>
         GameInstall.FindSteamInstall() is { } game ? new PatchManager(game.DataArchivePath, AppPaths.Default).OpenOriginal() : null);
 
+    /// <summary>The default combo, L3 + R3.</summary>
+    private static readonly int[] Default = SoftReset.ComboIndexes(null);
+
     private static RandomizerSettings Settings(params string[] options)
     {
         var s = new RandomizerSettings();
@@ -46,9 +49,9 @@ public class SoftResetTests
         if (Original.Value is not { } original) return;
 
         byte[] before = original.ReadFile(Cutscenes.EventPath(eventId));
-        var (after, reason) = SoftReset.Apply(before, SoftReset.CutsceneWorkers(eventId));
+        var (after, reason) = SoftReset.Apply(before, SoftReset.CutsceneWorkers(eventId), Default);
         Assert.True(after is not null, reason);
-        Assert.True(SoftResetFeature.HasWatcher(after));
+        Assert.True(SoftResetFeature.HasWatcher(after, Default));
         Assert.Empty(CutsceneSkipFeature.CheckEvent(before, after, Cutscenes.Original));
         Assert.Equal(VbfArchive.BlocksFor((ulong)before.Length), VbfArchive.BlocksFor((ulong)after.Length));
         // Only the code and the tables after it grow (the watcher is under 1 KB).
@@ -57,7 +60,7 @@ public class SoftResetTests
         var tables = new ScriptTables(EventFile.Read(after).Chunk(EventFile.ScriptChunk)!);
         var script = tables.Editor;
         var host = Enumerable.Range(0, script.WorkerCount).Single(w => script.FunctionCount(w) > 1 && script.JumpCount(w) > 0
-            && script.FunctionEntry(w, 1) == script.JumpTarget(w, script.JumpCount(w) - 1) && script.FunctionEntry(w, 1) >= script.CodeLength - SoftReset.WatcherCode(0).Length);
+            && script.FunctionEntry(w, 1) == script.JumpTarget(w, script.JumpCount(w) - 1) && script.FunctionEntry(w, 1) >= script.CodeLength - SoftReset.WatcherCode(0, Default).Length);
         Assert.Equal(4, tables.WorkerType(host));
         Assert.DoesNotContain(host, SoftReset.CutsceneWorkers(eventId));
     }
@@ -71,10 +74,10 @@ public class SoftResetTests
         if (Original.Value is not { } original) return;
 
         byte[] before = original.ReadFile(Cutscenes.EventPath(eventId));
-        var (after, reason) = SoftReset.Apply(before, SoftReset.CutsceneWorkers(eventId));
+        var (after, reason) = SoftReset.Apply(before, SoftReset.CutsceneWorkers(eventId), Default);
         Assert.True(after is not null, reason);
-        Assert.True(SoftResetFeature.HasWatcher(after));
-        Assert.Empty(SoftReset.CheckOwnWorker(before, after));
+        Assert.True(SoftResetFeature.HasWatcher(after, Default));
+        Assert.Empty(SoftReset.CheckOwnWorker(before, after, Default));
         Assert.Equal(VbfArchive.BlocksFor((ulong)before.Length), VbfArchive.BlocksFor((ulong)after.Length));
 
         var b = new ScriptTables(EventFile.Read(before).Chunk(EventFile.ScriptChunk)!);
@@ -93,22 +96,59 @@ public class SoftResetTests
         int at = a.Editor.CodeStart + patch.Offset + 1;
         chunk[at]--;
         file.SetChunk(EventFile.ScriptChunk, chunk);
-        Assert.NotEmpty(SoftReset.CheckOwnWorker(before, file.ToBytes()));
+        Assert.NotEmpty(SoftReset.CheckOwnWorker(before, file.ToBytes(), Default));
     }
 
-    [Fact]
-    public void The_watcher_waits_a_second_on_L1_R1_Start_then_goes_to_the_title()
+    [Theory]
+    [InlineData("l3+r3", new[] { 9, 10 })] // the default
+    [InlineData("l1+r1+start", new[] { 2, 3, 11 })]
+    [InlineData("select", new[] { 8 })]
+    public void The_watcher_waits_a_second_on_the_combo_then_goes_to_the_title(string combo, int[] buttons)
     {
-        byte[] code = SoftReset.WatcherCode(5);
+        Assert.Equal(buttons, SoftReset.ComboIndexes(combo));
+        byte[] code = SoftReset.WatcherCode(5, buttons);
         int polls = SoftReset.HoldFrames / SoftReset.PollFrames + 1;
         // One "button is down" test per button per poll, never the press-only 0x0046.
-        foreach (int button in SoftReset.Buttons)
+        foreach (int button in buttons)
             Assert.Equal(polls, Occurrences(code, [.. Atel.IsDown(button)]));
         Assert.Equal(polls, Occurrences(code, Atel.Call(Atel.Wait, SoftReset.PollFrames)));
         Assert.Equal(0, Occurrences(code, [0xB5, 0x46, 0x00]));
         Assert.Equal(1, Occurrences(code, Atel.Call(SoftReset.SetRoomFadeoutTime, 15)));
         Assert.Equal(1, Occurrences(code, Atel.Call(SoftReset.SetRoomFadeoutMode, 0)));
         Assert.Equal(1, Occurrences(code, Atel.Call(SoftReset.TransitionToRoom, 23, 0)));
+    }
+
+    [Fact]
+    public void A_recorded_combo_is_kept_and_odd_ones_fall_back_to_the_default()
+    {
+        // Any 1-3 different buttons, written in the skip list's order.
+        Assert.Equal("select+r1+l3", SoftReset.ComboId([SkipButtons.ById("l3"), SkipButtons.ById("select"), SkipButtons.ById("r1")]));
+        Assert.True(SoftReset.IsCombo("select+r1+l3"));
+        Assert.False(SoftReset.IsCombo("r1+select")); // not in order
+        Assert.False(SoftReset.IsCombo("l1+r1+l2+r2")); // four
+        Assert.False(SoftReset.IsCombo("l1+l1"));
+        Assert.False(SoftReset.IsCombo("dpad"));
+
+        var settings = Settings("softreset", "softresetbuttons=select+r1+l3");
+        Assert.Equal("select+r1+l3", SoftResetFeature.Combo(settings));
+        Assert.Equal([8, 3, 9], SoftResetFeature.Buttons(settings));
+        Assert.Equal("l3+r3", SoftResetFeature.Combo(Settings("softreset", "softresetbuttons=nonsense")));
+        Assert.Equal([9, 10], SoftResetFeature.Buttons(Settings("softreset")));
+    }
+
+    [Fact]
+    public void The_combo_warns_when_it_holds_the_cutscene_skip_button()
+    {
+        Assert.NotNull(SoftReset.OverlapWarning("l1+r1+start", Cutscenes.Hold, SkipButtons.ById("r1")));
+        Assert.Null(SoftReset.OverlapWarning("l1+r1+start", Cutscenes.Always, SkipButtons.ById("r1")));
+        Assert.Null(SoftReset.OverlapWarning("l3+r3", Cutscenes.Hold, SkipButtons.Default));
+    }
+
+    [Fact]
+    public void Stick_clicks_are_L3_and_R3()
+    {
+        Assert.Equal(9, SkipButtons.FromXbox("LeftThumb")!.Index);
+        Assert.Equal(10, SkipButtons.FromXbox("RightThumb")!.Index);
     }
 
     [Fact]
@@ -123,13 +163,13 @@ public class SoftResetTests
 
         // A skippable scene's event has both edits; the Blitzball event has the watcher and the new tables, moved along.
         string scene = Cutscenes.EventPath("bsil0600");
-        Assert.True(SoftResetFeature.HasWatcher(result.Files[scene]));
+        Assert.True(SoftResetFeature.HasWatcher(result.Files[scene], Default));
         // bsil0600 gets a worker of its own, added to the cutscene skip's edit (whose runs get renumbered with the rest).
         byte[] build = Cutscenes.Build(original, [.. Cutscenes.All.Where(s => s.EventId == "bsil0600")], Cutscenes.Hold, SkipButtons.Default)[scene];
-        Assert.Empty(SoftReset.CheckOwnWorker(build, result.Files[scene]));
+        Assert.Empty(SoftReset.CheckOwnWorker(build, result.Files[scene], Default));
         var copy = BlitzballStats.FindCopies(original).First(c => c.Path == BlitzballStats.EventPath(BlitzballStats.ReferenceEvent));
         byte[] blitz = result.Files[copy.Path];
-        Assert.True(SoftResetFeature.HasWatcher(blitz));
+        Assert.True(SoftResetFeature.HasWatcher(blitz, Default));
         var tables = BlitzballStats.FromCopy(blitz, copy.In(original.ReadFile(copy.Path), blitz));
         Assert.NotEqual(BlitzballStats.Read(original)[5, BlitzStat.HP], tables[5, BlitzStat.HP]);
     }

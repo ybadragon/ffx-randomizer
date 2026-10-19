@@ -89,7 +89,7 @@ internal static partial class CrossCheck
                     eventBytes[at + 4] ^= 1;
                 }
                 // Soft reset: the title room (23 -> 22) in the first skippable scene's event that has the watcher (always disassembled).
-                if (Cutscenes.ByEvent.Select(g => Cutscenes.EventPath(g.Key)).FirstOrDefault(p => copy.TryGetValue(p, out byte[]? b) && SoftResetFeature.HasWatcher(b)) is { } resetPath)
+                if (Cutscenes.ByEvent.Select(g => Cutscenes.EventPath(g.Key)).FirstOrDefault(p => copy.TryGetValue(p, out byte[]? b) && SoftResetFeature.HasWatcher(b, SoftResetFeature.Buttons(result.Settings))) is { } resetPath)
                 {
                     byte[] call = Atel.Call(SoftReset.TransitionToRoom, SoftReset.TitleRoom, SoftReset.TitleSpawn);
                     copy[resetPath][copy[resetPath].AsSpan().LastIndexOf(call) + 1] ^= 1;
@@ -189,7 +189,7 @@ internal static partial class CrossCheck
                 checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
             if (result.Spoiler[SoftResetFeature.Section] is not null)
-                problems.AddRange(CompareSoftReset(original, seed, files, checkedAreas, result.Spoiler[BlitzballStatsFeature.Section] is not null, result.Spoiler[SoftResetFeature.Section]));
+                problems.AddRange(CompareSoftReset(original, seed, files, checkedAreas, result.Spoiler[BlitzballStatsFeature.Section] is not null, result.Spoiler[SoftResetFeature.Section], SoftResetFeature.Buttons(result.Settings)));
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");

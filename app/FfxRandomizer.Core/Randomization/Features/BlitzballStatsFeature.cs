@@ -162,7 +162,7 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
             {
                 byte[] tabled = (byte[])before.Clone();
                 mine.WriteTo(tabled, copy);
-                if (!SoftReset.WithWatcher(copy.Path, tabled).AsSpan().SequenceEqual(bytes))
+                if (!SoftReset.WithWatcher(copy.Path, tabled, SoftResetFeature.Buttons(context.Settings)).AsSpan().SequenceEqual(bytes))
                     yield return $"Blitzball: {copy.Path} isn't its stat tables plus the soft reset watcher.";
             }
             else if (FirstChangeOutsideTables(before, bytes, copy) is int at)

@@ -202,6 +202,7 @@ public class CutsceneTests
         Assert.Equal("x", SkipButtons.FromXbox("A")!.Id);
         Assert.Equal("square", SkipButtons.FromXbox("X")!.Id);
         Assert.Equal(8, SkipButtons.ById("select").Index);
-        Assert.Null(SkipButtons.FromXbox("LeftThumb"));
+        Assert.Equal("l3", SkipButtons.FromXbox("LeftThumb")!.Id);
+        Assert.Null(SkipButtons.FromXbox("DPadUp"));
     }
 }

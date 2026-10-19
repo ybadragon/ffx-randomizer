@@ -59,8 +59,9 @@ internal static partial class CrossCheck
             if (prompts != group.Count() * (Cutscenes.Steps + 1)) yield return $"{eventId}: the parser shows {prompts} hold-to-skip prompts, expected {group.Count() * (Cutscenes.Steps + 1)}";
             // The hold test must be the "button is down" call on the chosen button, never the press-only 0x0046.
             int expectedTests = watched.Count * (Cutscenes.IntroFrames / Cutscenes.IntroPollFrames + 1 + polls) + started.Count * (1 + polls);
-            // Soft reset's watcher tests L1, R1 and Start once per poll too.
-            if (SoftReset.Buttons.Contains(button.Index) && SoftResetFeature.HasWatcher(files[Cutscenes.EventPath(eventId)])) expectedTests += SoftReset.HoldFrames / SoftReset.PollFrames + 1;
+            // Soft reset's watcher tests its combo's buttons once per poll too.
+            if (SoftResetFeature.On(settings) && SoftResetFeature.Buttons(settings).Contains(button.Index)
+                && SoftResetFeature.HasWatcher(files[Cutscenes.EventPath(eventId)], SoftResetFeature.Buttons(settings))) expectedTests += SoftReset.HoldFrames / SoftReset.PollFrames + 1;
             int downTests = DownTest().Matches(ours).Count(m => m.Groups[1].Value == $"{button.Index:X2}");
             if (downTests != expectedTests)
                 yield return $"{eventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {expectedTests}";

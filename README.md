@@ -39,7 +39,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
 | Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers Dream Zanarkand (the campfire, stadium, highway and Sinspawn scenes) and 9 Besaid scenes so far; later visits play as usual |
-| Story (experimental) | Soft reset: hold L1 + R1 + Start for about a second in the field to fade out and return to the title screen (not in battles or menus). In 317 of the 324 areas |
+| Story (experimental) | Soft reset: hold a button combo (L3 + R3 by default, or pick or record up to three buttons) for about a second in the field to fade out and return to the title screen, cutscenes included (not in battles or menus). In 299 of the 324 areas |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.

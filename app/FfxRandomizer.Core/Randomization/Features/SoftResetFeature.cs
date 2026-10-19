@@ -10,21 +10,28 @@ namespace FfxRandomizer.Core.Randomization.Features;
 /// </summary>
 public sealed class SoftResetFeature : IRandomizerFeature
 {
-    public const string Section = "softreset", Id = "softreset";
+    public const string Section = "softreset", Id = "softreset", ButtonsId = "softresetbuttons";
 
     public static bool On(RandomizerSettings s) => s.IsOn(Id);
+
+    /// <summary>The combo's id (see <see cref="SoftReset.Combos"/>).</summary>
+    public static string Combo(RandomizerSettings s) => s.ChoiceOf(OptionCatalog.AllGroups.First(g => g.Id == Id).Dropdown!);
+
+    /// <summary>The combo's game button numbers.</summary>
+    public static int[] Buttons(RandomizerSettings s) => SoftReset.ComboIndexes(Combo(s));
 
     public bool IsEnabled(RandomizerSettings s) => On(s);
 
     public void Apply(RandomizerContext context)
     {
+        var buttons = Buttons(context.Settings);
         var leftOut = new List<object>();
         int covered = 0;
         foreach (string id in SoftReset.FieldEvents(context.Original))
         {
             string path = Cutscenes.EventPath(id);
             byte[] current = context.ChangedFiles.TryGetValue(path, out byte[]? edited) ? edited : context.Original.ReadFile(path);
-            var (bytes, reason) = SoftReset.Apply(current, SoftReset.CutsceneWorkers(id));
+            var (bytes, reason) = SoftReset.Apply(current, SoftReset.CutsceneWorkers(id), buttons);
             if (bytes is null)
             {
                 leftOut.Add(new { Event = id, Why = reason });
@@ -33,12 +40,13 @@ public sealed class SoftResetFeature : IRandomizerFeature
             context.Replace(path, bytes);
             covered++;
         }
-        context.Spoil(Section, new { FieldEvents = covered, Combo = "hold L1 + R1 + Start for about a second", LeftOut = leftOut });
+        context.Spoil(Section, new { FieldEvents = covered, Combo = $"hold {SoftReset.ComboLabel(Combo(context.Settings))} for about a second", LeftOut = leftOut });
     }
 
     public IEnumerable<string> Validate(RandomizerContext context)
     {
         int covered = 0;
+        var buttons = Buttons(context.Settings);
         var blitzCopies = new BlitzballStatsFeature().IsEnabled(context.Settings)
             ? BlitzballStats.FindCopies(context.Original).ToDictionary(c => c.Path, StringComparer.OrdinalIgnoreCase)
             : [];
@@ -62,7 +70,7 @@ public sealed class SoftResetFeature : IRandomizerFeature
                 BlitzballStats.FromCopy(written, copy.In(original, written)).WriteTo(before, copy);
             }
 
-            byte[] expected = SoftReset.WithWatcher(path, before);
+            byte[] expected = SoftReset.WithWatcher(path, before, buttons);
             if (!written.AsSpan().SequenceEqual(expected))
             {
                 yield return $"Soft reset: {path} isn't the watcher added to what the other features wrote.";
@@ -77,16 +85,16 @@ public sealed class SoftResetFeature : IRandomizerFeature
             // the code moved as one block). Watcher in a worker of its own: see SoftReset.CheckOwnWorker.
             bool ownWorker = new EventScriptEditor(EventFile.Read(written).Chunk(EventFile.ScriptChunk)!).WorkerCount
                 != new EventScriptEditor(EventFile.Read(before).Chunk(EventFile.ScriptChunk)!).WorkerCount;
-            var structure = ownWorker ? SoftReset.CheckOwnWorker(before, written) : CutsceneSkipFeature.CheckEvent(before, written, Cutscenes.Original);
+            var structure = ownWorker ? SoftReset.CheckOwnWorker(before, written, buttons) : CutsceneSkipFeature.CheckEvent(before, written, Cutscenes.Original);
             foreach (string problem in structure)
                 yield return $"Soft reset: {path}: {problem}";
-            if (!HasWatcher(written)) yield return $"Soft reset: {path} has no worker whose main is the watcher.";
+            if (!HasWatcher(written, buttons)) yield return $"Soft reset: {path} has no worker whose main is the watcher.";
         }
         if (covered == 0) yield return "Soft reset: no field event has the watcher.";
     }
 
     /// <summary>Some worker's main (not a subroutine's) starts at the watcher code, looping through that worker's label at its start.</summary>
-    public static bool HasWatcher(byte[] ebp)
+    public static bool HasWatcher(byte[] ebp, IReadOnlyList<int> buttons)
     {
         var tables = new ScriptTables(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!);
         var script = tables.Editor;
@@ -95,7 +103,7 @@ public sealed class SoftResetFeature : IRandomizerFeature
             // A subroutine's f01 isn't a main the engine starts.
             if (tables.WorkerType(w) == 0 || script.FunctionCount(w) < 2 || script.JumpCount(w) == 0) continue;
             int entry = script.FunctionEntry(w, 1), loop = script.JumpCount(w) - 1;
-            byte[] code = SoftReset.WatcherCode(loop);
+            byte[] code = SoftReset.WatcherCode(loop, buttons);
             if (script.JumpTarget(w, loop) == entry && entry + code.Length <= script.CodeLength && script.Code(entry, code.Length).SequenceEqual(code))
                 return true;
         }
