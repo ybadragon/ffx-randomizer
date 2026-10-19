@@ -22,7 +22,8 @@ internal static class CutsceneCommands
         switch (args.FirstOrDefault())
         {
             case "find":
-                return Find(original, areas, int.Parse(Option("--below") ?? "1000"), args.Contains("--emit"));
+                if (args.Contains("--trace")) SceneFinder.Trace = Console.WriteLine;
+                return Find(original, areas, int.Parse(Option("--from") ?? "0"), int.Parse(Option("--below") ?? "1000"), args.Contains("--emit"));
             case "audit":
                 return Audit(original, areas);
             case "saves":
@@ -41,19 +42,22 @@ internal static class CutsceneCommands
             .Distinct()
             .Order(StringComparer.Ordinal);
 
-    private static int Find(VbfArchive original, string[] areas, int below, bool emit)
+    private static int Find(VbfArchive original, string[] areas, int from, int below, bool emit)
     {
         foreach (string id in EventIds(original, areas))
         {
             var chunk = EventFile.Read(original.ReadFile(Cutscenes.EventPath(id))).Chunk(EventFile.ScriptChunk)!;
-            foreach (var c in SceneFinder.Find(id, chunk, below))
+            var (found, rejected) = SceneFinder.Find(id, chunk, from, below);
+            foreach (var c in found)
             {
                 var a = c.Audit;
-                Console.WriteLine($"{id} w{c.Worker:X2}::f{c.Function:X2} @{c.Entry:X4}  GameMoment {c.MomentFrom}..{c.MomentBelow - 1} -> {c.ExitMoment}  exit {c.Exit:X4} ({a.ExitKind}: {a.ExitWhat})  content {c.Content}  host w{c.HostWorker:X2} window {c.MessageWindow} level {c.SkipLevel}  {(a.Safe ? "SAFE" : "NOT SAFE")}");
+                Console.WriteLine($"{id} w{c.Worker:X2}::f{c.Function:X2} @{c.Entry:X4}  GameMoment {c.MomentFrom}..{c.MomentBelow - 1} -> {c.ExitMoment}  exit w{c.ExitWorker:X2} {c.Exit:X4} ({a.ExitKind}: {a.ExitWhat})  content {c.Content}  host w{c.HostWorker:X2} window {c.MessageWindow} level {c.SkipLevel}{(c.AlsoStartedBy.Count > 0 ? "  also from " + string.Join(",", c.AlsoStartedBy) : "")}");
                 foreach (var s in a.Skipped.Where(s => s.Effect != SkipEffect.Ok)) Console.WriteLine($"    {s.Effect,-6} w{s.Worker:X2} {s.Offset:X4} {s.What}");
-                foreach (string n in a.Notes.Distinct().Take(5)) Console.WriteLine($"    note: {n}");
-                if (emit && a.Safe) Console.WriteLine(Emit(c));
+                foreach (string n in a.Notes.Distinct().Take(3)) Console.WriteLine($"    note: {n}");
+                if (emit) Console.WriteLine(Emit(c));
             }
+            foreach (var r in rejected.DistinctBy(r => (r.Worker, r.Function, r.Reason)))
+                Console.WriteLine($"{id} w{r.Worker:X2}::f{r.Function:X2}  GameMoment {r.Moment}  content {r.Content}  LEFT OUT: {r.Reason}");
         }
         return 0;
     }
@@ -61,8 +65,9 @@ internal static class CutsceneCommands
     private static string Emit(SceneCandidate c) =>
         $"        new(\"{c.EventId} scene\", \"{c.EventId[..4]}\", \"{c.EventId}\", SceneWorker: 0x{c.Worker:X2}, " +
         $"SceneStart: new(0x{c.Entry:X4}, [{string.Join(", ", c.EntryBytes.Select(b => $"0x{b:X2}"))}]), " +
-        $"Exit: new(Worker: 0x{c.Worker:X2}, Jump: -1, CodeOffset: 0x{c.Exit:X4}), MomentBelow: {c.MomentBelow}, MessageWindow: {c.MessageWindow}, " +
-        $"HostWorker: 0x{c.HostWorker:X2}, MomentFrom: {c.MomentFrom}, SkipLevel: {c.SkipLevel}),";
+        $"Exit: new(Worker: 0x{c.ExitWorker:X2}, Jump: -1, CodeOffset: 0x{c.Exit:X4}, Expected: [{string.Join(", ", c.ExitBytes.Select(b => $"0x{b:X2}"))}]), " +
+        $"MomentBelow: {c.MomentBelow}, MessageWindow: {c.MessageWindow}, HostWorker: 0x{c.HostWorker:X2}, MomentFrom: {c.MomentFrom}, SkipLevel: {c.SkipLevel}" +
+        (c.Audit.ExitKind == SceneExitKind.SameRoom ? ", StaysInRoom: true" : "") + "),";
 
     private static int Audit(VbfArchive original, string[] areas)
     {

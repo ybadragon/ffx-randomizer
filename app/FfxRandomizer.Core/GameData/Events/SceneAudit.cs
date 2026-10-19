@@ -5,7 +5,7 @@ public enum SkipEffect
 {
     /// <summary>Presentation (camera, motion, text, sound) or state the exit path sets again.</summary>
     Ok,
-    /// <summary>Lasting state (story flags, items, party, music...): the skip must run the statement itself.</summary>
+    /// <summary>Lasting state (story flags, items, party...): the skip must run the statement itself.</summary>
     Replay,
     /// <summary>Must not be skipped across: a battle, a choice, a menu, or a room change before the exit.</summary>
     Block,
@@ -15,7 +15,11 @@ public enum SkipEffect
 public enum SceneExitKind { Warp, Battle, SameRoom, Unknown }
 
 /// <summary>One side-effecting statement on the skipped path: which worker runs it, where, and what to do about it.</summary>
-public sealed record SkippedStatement(int Worker, int Offset, string What, SkipEffect Effect, byte[] Bytes);
+/// <remarks><see cref="OwnWorker"/>: the statement acts on the worker running it (a placement), so its replay runs there.</remarks>
+public sealed record SkippedStatement(int Worker, int Offset, string What, SkipEffect Effect, byte[] Bytes, bool OwnWorker = false);
+
+/// <summary>One statement as the scene runs it, in order: functions it runs on other workers appear inline.</summary>
+public sealed record TraceStep(int Worker, AtelStatement Statement, int Depth, bool Undecided);
 
 /// <summary>The audit of one scene skip: every statement the skip bypasses that does more than presentation.</summary>
 public sealed record SceneAuditResult(
@@ -25,8 +29,8 @@ public sealed record SceneAuditResult(
     public IEnumerable<SkippedStatement> Blocks => Skipped.Where(s => s.Effect == SkipEffect.Block);
     public IEnumerable<SkippedStatement> Replays => Skipped.Where(s => s.Effect == SkipEffect.Replay);
 
-    /// <summary>A skip is safe when nothing blocks it, it reaches its exit and the exit leaves the room.</summary>
-    public bool Safe => !Blocks.Any() && ReachesExit && ExitKind is SceneExitKind.Warp or SceneExitKind.Battle;
+    /// <summary>A skip is safe when nothing blocks it and it reaches its exit, which leaves the room or returns in it.</summary>
+    public bool Safe => !Blocks.Any() && ReachesExit && ExitKind is not SceneExitKind.Unknown;
 
     /// <summary>The statements the skip runs before jumping to the exit, in the order the scene would have run them.</summary>
     public byte[] ReplayCode => [.. Replays.SelectMany(r => r.Bytes)];
@@ -34,7 +38,7 @@ public sealed record SceneAuditResult(
     public IEnumerable<string> Problems()
     {
         if (!ReachesExit) yield return "the first-visit path doesn't reach the exit";
-        if (ExitKind is not (SceneExitKind.Warp or SceneExitKind.Battle)) yield return $"the exit doesn't leave the room ({ExitWhat})";
+        if (ExitKind == SceneExitKind.Unknown) yield return $"the exit's end wasn't found ({ExitWhat})";
         foreach (var b in Blocks) yield return $"w{b.Worker:X2} {b.Offset:X4}: {b.What} can't be skipped";
     }
 }
@@ -46,7 +50,7 @@ public sealed record SceneAuditResult(
 /// </summary>
 public static class SceneAudit
 {
-    /// <summary>Calls that end the skip's usefulness or can't be skipped: battles, choices, menus, and room changes.</summary>
+    /// <summary>Calls that can't be skipped across: battles, choices, menus, and room changes before the exit.</summary>
     public static readonly IReadOnlyDictionary<int, string> BlockCalls = new Dictionary<int, string>
     {
         [0x7002] = "launchBattle", [0xC024] = "launchBattleAlwaysWin", [0x013B] = "displayFieldChoice", [0x007D] = "awaitPlayerDialogueChoice",
@@ -81,161 +85,228 @@ public static class SceneAudit
     public static bool IsContentCall(int target) =>
         target is 0x0064 or 0x006A or 0x00D5 or 0x0015 or 0x0018 or 0x0019 || (target >= 0x5000 && target <= 0x50FF) || (target >= 0x6000 && target <= 0x60FF);
 
+    public static bool HasContent(AtelStatement s) => s.Instructions.Any(i => i.Op is AtelCode.Call or AtelCode.CallPopA && IsContentCall(i.Operand));
+
+    public static bool IsWarp(AtelStatement s) => s.Instructions.Any(i => i.Op is AtelCode.Call or AtelCode.CallPopA && WarpCalls.Contains(i.Operand));
+    public static bool IsBattle(AtelStatement s) => s.Instructions.Any(i => i.Op is AtelCode.Call or AtelCode.CallPopA && BattleCalls.Contains(i.Operand));
+
     private const int MaxDepth = 3, MaxSteps = 20000;
 
     /// <summary>
-    /// Audits skipping from <paramref name="start"/> to <paramref name="exit"/> in <paramref name="worker"/>'s code with
-    /// GameMoment = <paramref name="moment"/>. The exit path is followed from <paramref name="exit"/> to see how the scene
-    /// leaves; replays the exit path repeats are downgraded to OK.
+    /// Follows code the way the scene runs it, from <paramref name="start"/> in <paramref name="worker"/>, with GameMoment
+    /// = <paramref name="moment"/>: GameMoment branches are decided, others followed both ways (code on one side of an
+    /// undecided forward branch is marked undecided up to its target), functions run on other workers are followed inline
+    /// (up to 3 deep). Stops at <paramref name="stop"/> (that worker's code from an offset to the end of its function:
+    /// <see cref="Trace.ReachedStop"/>), at a room change or battle (unless <paramref name="throughExits"/>), or when
+    /// every branch returns.
     /// </summary>
-    public static SceneAuditResult Audit(ScriptTables tables, int worker, int start, int exit, int moment)
+    public sealed class Trace
     {
-        var skipped = new List<SkippedStatement>();
-        var notes = new List<string>();
-        var runs = new HashSet<(int, int)>();
-        // Everything from the exit to the end of its function runs on the skip path too, so reaching any of it counts as
-        // reaching the exit.
-        int exitRegionEnd = Enumerable.Range(0, tables.WorkerCount)
-            .SelectMany(w => Enumerable.Range(0, tables.Editor.FunctionCount(w)).Select(f => tables.Editor.FunctionEntry(w, f)))
-            .Where(e => e > exit).DefaultIfEmpty(tables.Code.Length).Min();
-        var path = Walk(tables, worker, start, exit, moment, depth: 0, skipped, notes, runs, out bool reached, out _, exitRegionEnd, (worker, exit, exitRegionEnd));
-        // A run function reached twice (a loop, or both sides of a branch) is listed once.
-        skipped = skipped.DistinctBy(s => (s.Worker, s.Offset, s.What)).ToList();
-        var exitPath = Walk(tables, worker, exit, stopAt: -1, MomentAfter(tables, path, moment), depth: MaxDepth, [], [], [], out _, out var end);
-        var (kind, what) = end;
-
-        // Music the scene changes on its way out doesn't matter when the exit changes room: the next room sets its own.
-        if (kind is SceneExitKind.Warp or SceneExitKind.Battle)
-            for (int i = 0; i < skipped.Count; i++)
-                if (MusicCalls.Contains(skipped[i].What.Split(' ')[0]) && skipped[i].Effect != SkipEffect.Ok)
-                    skipped[i] = skipped[i] with { Effect = SkipEffect.Ok, What = skipped[i].What + " (music; the next room sets its own)" };
-
-        // A replay the exit path runs anyway needn't be replayed.
-        var exitStatements = exitPath.Select(s => Convert.ToHexString(tables.Code.Slice(s.Offset, s.Length))).ToHashSet();
-        for (int i = 0; i < skipped.Count; i++)
-            if (skipped[i].Effect == SkipEffect.Replay && exitStatements.Contains(Convert.ToHexString(skipped[i].Bytes)))
-                skipped[i] = skipped[i] with { Effect = SkipEffect.Ok, What = skipped[i].What + " (the exit does it too)" };
-        // A GameMoment write is only needed if the exit doesn't set GameMoment itself.
-        if (exitPath.Any(s => AtelCode.MomentWrite(s, tables) is not null))
-            for (int i = 0; i < skipped.Count; i++)
-                if (skipped[i].Effect == SkipEffect.Replay && skipped[i].What.StartsWith("Set GameMoment", StringComparison.Ordinal))
-                    skipped[i] = skipped[i] with { Effect = SkipEffect.Ok, What = skipped[i].What + " (the exit sets GameMoment)" };
-        return new SceneAuditResult(skipped, kind, what, reached, notes, [.. runs]);
+        public List<TraceStep> Steps { get; } = [];
+        public List<string> Notes { get; } = [];
+        public HashSet<(int, int)> Runs { get; } = [];
+        public bool ReachedStop { get; set; }
+        public TraceStep? End { get; set; }
+        public SceneExitKind EndKind { get; set; } = SceneExitKind.Unknown;
+        public int FinalMoment { get; set; }
     }
 
-    private static int MomentAfter(ScriptTables tables, List<AtelStatement> path, int moment)
+    public static Trace Follow(ScriptTables tables, int worker, int start, int moment, (int Worker, int From, int To)? stop = null, bool throughExits = false)
     {
-        foreach (var s in path) if (AtelCode.MomentWrite(s, tables) is int m) moment = m;
-        return moment;
+        var trace = new Trace { FinalMoment = moment };
+        Follow(tables, worker, start, moment, 0, stop, throughExits, trace);
+        return trace;
     }
 
-    /// <summary>
-    /// Follows code from <paramref name="start"/> until <paramref name="stopAt"/> (reached = true), a return or a warp,
-    /// evaluating GameMoment branches and following both sides of anything else. Returns the statements of
-    /// <paramref name="worker"/>'s own path in order (functions run on other workers are audited into
-    /// <paramref name="skipped"/> but not returned).
-    /// </summary>
-    public static List<AtelStatement> Walk(ScriptTables tables, int worker, int start, int stopAt, int moment, int depth,
-        List<SkippedStatement> skipped, List<string> notes, HashSet<(int, int)> runs, out bool reached, out (SceneExitKind Kind, string What) end,
-        int stopRegionEnd = -1, (int Worker, int Exit, int End)? sceneExit = null)
+    private static bool Follow(ScriptTables tables, int worker, int start, int moment, int depth, (int Worker, int From, int To)? stop, bool throughExits, Trace trace)
     {
         var code = tables.Code;
-        var path = new List<AtelStatement>();
         var seen = new HashSet<(int, int)>();
-        var queue = new Queue<(int At, int Moment)>();
-        // Code that only runs on one side of a branch the audit can't decide: from the branch to its forward target
-        // (taken as the join). A replay there might not have happened, so it can't be replayed blindly.
+        var queue = new Queue<(int At, int Moment, bool Switch)>();
         var undecided = new List<(int From, int To)>();
-        queue.Enqueue((start, moment));
-        reached = false;
-        end = (SceneExitKind.Unknown, "no end found");
+        queue.Enqueue((start, moment, false));
         int steps = 0;
+        bool reached = false;
         while (queue.Count > 0 && steps++ < MaxSteps)
         {
-            var (at, gm) = queue.Dequeue();
+            var (at, gm, ySwitch) = queue.Dequeue();
             while (true)
             {
-                if (at == stopAt || (stopAt >= 0 && at > stopAt && at < stopRegionEnd)) { reached = true; break; }
+                if (stop is { } x && x.Worker == worker && at >= x.From && at < x.To) { trace.ReachedStop = reached = true; break; }
                 if (!seen.Add((at, gm))) break;
-                if (at < 0 || at >= code.Length || AtelCode.StatementAt(code, at) is not { } s) { notes.Add($"w{worker:X2}: code runs off at {at:X4}"); break; }
-                path.Add(s);
-                int before = skipped.Count;
-                Classify(tables, worker, s, gm, depth, skipped, notes, runs, ref end, sceneExit);
-                if (undecided.Any(r => s.Offset >= r.From && s.Offset < r.To))
-                    for (int i = before; i < skipped.Count; i++)
-                        if (skipped[i].Effect == SkipEffect.Replay)
-                            skipped[i] = skipped[i] with { Effect = SkipEffect.Block, What = skipped[i].What + " (on a branch the audit can't decide)" };
-                if (AtelCode.MomentWrite(s, tables) is int written) gm = written;
+                if (at < 0 || at >= code.Length || AtelCode.StatementAt(code, at) is not { } s) { trace.Notes.Add($"w{worker:X2}: code runs off at {at:X4}"); break; }
+                bool isUndecided = undecided.Any(r => s.Offset >= r.From && s.Offset < r.To);
+                var step = new TraceStep(worker, s, depth, isUndecided);
+                trace.Steps.Add(step);
+                if (AtelCode.MomentWrite(s, tables) is int written) { gm = written; trace.FinalMoment = written; }
+                if (s.Last.Op == AtelCode.PopY) ySwitch = AtelCode.SwitchesOnMoment(s);
+                if (IsWarp(s) || IsBattle(s))
+                {
+                    if (trace.End is null) { trace.End = step; trace.EndKind = IsWarp(s) ? SceneExitKind.Warp : SceneExitKind.Battle; }
+                    if (!throughExits) { queue.Clear(); return reached; }
+                }
+                // Follow functions this runs on other workers (or this one) inline.
+                if (s.Instructions.Any(i => AtelCode.IsRun(i.Op)))
+                {
+                    if (AtelCode.RunTarget(s, tables) is { } run)
+                    {
+                        trace.Runs.Add((run.Worker, run.Function));
+                        if (depth < MaxDepth && run.Worker >= 0 && run.Worker < tables.WorkerCount && run.Function >= 0 && run.Function < tables.Editor.FunctionCount(run.Worker))
+                        {
+                            // Once the run reaches the exit, the rest of this path never runs (the exit leaves the room).
+                            bool inner = Follow(tables, run.Worker, tables.Editor.FunctionEntry(run.Worker, run.Function), gm, depth + 1, stop, throughExits, trace);
+                            if (trace.End is not null && !throughExits) { queue.Clear(); return reached; }
+                            if (inner) { reached = true; break; }
+                            gm = trace.FinalMoment;
+                        }
+                    }
+                    else trace.Notes.Add($"w{worker:X2} {s.Offset:X4}: runs a worker function chosen at run time (not followed)");
+                }
+                if (s.Last.Op == AtelCode.Jsr) trace.Notes.Add($"w{worker:X2} {s.Offset:X4}: jumps to subroutine worker {s.Last.Operand:X2} (not followed)");
                 var last = s.Last;
-                if (AtelCode.IsReturn(last.Op)) { if (end.Kind == SceneExitKind.Unknown) end = (SceneExitKind.SameRoom, "returns in the room"); break; }
-                if (end.Kind is SceneExitKind.Warp or SceneExitKind.Battle && stopAt < 0) { queue.Clear(); break; }
-                if (last.Op == AtelCode.Jmp || last.Op == AtelCode.PopXJmp) { at = Target(tables, worker, last.Operand); continue; }
+                if (AtelCode.IsReturn(last.Op))
+                {
+                    if (depth == 0 && trace.End is null && trace.EndKind == SceneExitKind.Unknown) { trace.End = step; trace.EndKind = SceneExitKind.SameRoom; }
+                    break;
+                }
+                if (last.Op is AtelCode.Jmp or AtelCode.PopXJmp) { at = Target(tables, worker, last.Operand); continue; }
                 if (last.Op is AtelCode.PopXCJmp or AtelCode.PopXNCJmp)
                 {
-                    bool? value = AtelCode.EvaluateMomentCondition(s, gm, tables);
+                    bool? value = AtelCode.EvaluateMomentCondition(s, gm, tables, ySwitch);
                     int target = Target(tables, worker, last.Operand);
-                    bool jumpsWhen = last.Op == AtelCode.PopXCJmp;
-                    if (value is bool v) { at = v == jumpsWhen ? target : s.End; continue; }
-                    queue.Enqueue((target, gm));
+                    if (value is bool v) { at = v == (last.Op == AtelCode.PopXCJmp) ? target : s.End; continue; }
+                    queue.Enqueue((target, gm, ySwitch));
                     if (target > s.End) undecided.Add((s.End, target));
                     at = s.End;
                     continue;
                 }
-                if (last.Op is AtelCode.CJmp or AtelCode.NCJmp) { queue.Enqueue((Target(tables, worker, last.Operand), gm)); at = s.End; continue; }
+                if (last.Op is AtelCode.CJmp or AtelCode.NCJmp) { queue.Enqueue((Target(tables, worker, last.Operand), gm, ySwitch)); at = s.End; continue; }
                 at = s.End;
             }
         }
-        return path;
+        return reached;
     }
 
     private static int Target(ScriptTables tables, int worker, int jump) =>
-        jump < tables.Editor.JumpCount(worker) ? tables.Editor.JumpTarget(worker, jump) : -1;
+        jump >= 0 && jump < tables.Editor.JumpCount(worker) ? tables.Editor.JumpTarget(worker, jump) : -1;
 
-    private static void Classify(ScriptTables tables, int worker, AtelStatement s, int gm, int depth, List<SkippedStatement> skipped,
-        List<string> notes, HashSet<(int, int)> runs, ref (SceneExitKind Kind, string What) end, (int Worker, int Exit, int End)? sceneExit)
+    /// <summary>The end of the function code that holds <paramref name="offset"/>: the next function entry of any worker.</summary>
+    public static int FunctionRegionEnd(ScriptTables tables, int offset) =>
+        Enumerable.Range(0, tables.WorkerCount)
+            .SelectMany(w => Enumerable.Range(0, tables.Editor.FunctionCount(w)).Select(f => tables.Editor.FunctionEntry(w, f)))
+            .Where(e => e > offset).DefaultIfEmpty(tables.Code.Length).Min();
+
+    /// <summary>
+    /// Audits skipping a scene that starts at <paramref name="start"/> in <paramref name="startWorker"/> and exits at
+    /// <paramref name="exit"/> in <paramref name="exitWorker"/>, with GameMoment = <paramref name="moment"/>. Code from the
+    /// exit to the end of its function runs on the skip path too, so reaching it anywhere counts as reaching the exit.
+    /// </summary>
+    public static SceneAuditResult Audit(ScriptTables tables, int startWorker, int start, int exitWorker, int exit, int moment)
     {
-        byte[] Bytes() => tables.Code.Slice(s.Offset, s.Length).ToArray();
+        var stop = (exitWorker, exit, FunctionRegionEnd(tables, exit));
+        var before = Follow(tables, startWorker, start, moment, stop, throughExits: true);
+        var after = Follow(tables, exitWorker, exit, before.FinalMoment);
+        var (kind, what) = after.End is { } e
+            ? (after.EndKind, $"{(IsWarp(e.Statement) ? "changes room" : IsBattle(e.Statement) ? "starts a battle" : "returns")} at w{e.Worker:X2} {e.Statement.Offset:X4}")
+            : (SceneExitKind.Unknown, "no end found");
+
+        var skipped = new List<SkippedStatement>();
+        bool sameRoom = kind == SceneExitKind.SameRoom;
+        int player = PlayerWorker(tables);
+        foreach (var step in before.Steps) Classify(tables, step, skipped, sameRoom, player, exitWorker);
+        skipped = skipped.DistinctBy(s => (s.Worker, s.Offset, s.What)).ToList();
+        if (sameRoom) skipped.AddRange(PlayerPlacement(tables, before, player, exitWorker));
+
+        var exitBytes = after.Steps.Select(s => Convert.ToHexString(tables.Code.Slice(s.Statement.Offset, s.Statement.Length))).ToHashSet();
+        bool exitSetsMoment = after.Steps.Any(s => AtelCode.MomentWrite(s.Statement, tables) is not null);
+        for (int i = 0; i < skipped.Count; i++)
+        {
+            var s = skipped[i];
+            if (s.Effect == SkipEffect.Ok) continue;
+            string? why = null;
+            if (kind is SceneExitKind.Warp or SceneExitKind.Battle && MusicCalls.Contains(s.What.Split(' ')[0])) why = "music; the next room sets its own";
+            else if (s.Effect == SkipEffect.Replay && exitBytes.Contains(Convert.ToHexString(s.Bytes))) why = "the exit does it too";
+            else if (s.Effect == SkipEffect.Replay && exitSetsMoment && s.What.StartsWith("Set GameMoment", StringComparison.Ordinal)) why = "the exit sets GameMoment";
+            if (why is not null) skipped[i] = s with { Effect = SkipEffect.Ok, What = $"{s.What} ({why})" };
+        }
+        return new SceneAuditResult(skipped, kind, what, before.ReachedStop, [.. before.Notes.Distinct()], [.. before.Runs]);
+    }
+
+    /// <summary>Calls that place the worker running them: where the player stands after a scene that stays in the room.</summary>
+    private static readonly IReadOnlyDictionary<int, string> PositionCalls = new Dictionary<int, string>
+    {
+        [0x0126] = "warpToPoint", [0x0013] = "setPosition",
+    };
+
+    private const int SetDestination = 0x0015, WarpToPoint = 0x0126;
+
+    /// <summary>
+    /// Where the player ends up after a scene that stays in the room: only the last placement the player's own worker
+    /// makes counts (warpToPoint, setPosition, or the destination of its last walk, replayed as a warpToPoint). It can only
+    /// be replayed when the exit's worker is the player, since a placement moves whoever runs it.
+    /// </summary>
+    private static IEnumerable<SkippedStatement> PlayerPlacement(ScriptTables tables, Trace before, int player, int exitWorker)
+    {
+        var placements = before.Steps
+            .Where(s => s.Worker == player && s.Statement.Last.Op == AtelCode.CallPopA && s.Statement.Last.Operand is WarpToPoint or 0x0013 or SetDestination)
+            .ToList();
+        if (placements.Count == 0) yield break;
+        var last = placements[^1];
+        var s = last.Statement;
+        byte[] bytes = tables.Code.Slice(s.Offset, s.Length).ToArray();
+        string what = $"player's last placement ({(s.Last.Operand == SetDestination ? "walk destination, replayed as warpToPoint" : PositionCalls[s.Last.Operand])})";
+        if (s.Last.Operand == SetDestination) bytes[^2] = WarpToPoint & 0xFF;
+        if (s.Last.Operand == SetDestination) bytes[^1] = WarpToPoint >> 8;
+        bool replayable = !last.Undecided && s.Instructions.Take(s.Instructions.Count - 1).All(i => i.Op is AtelCode.PushF or AtelCode.PushII or AtelCode.PushI);
+        yield return new SkippedStatement(last.Worker, s.Offset, replayable ? what : what + " (the place is computed or on an undecided branch)",
+            replayable ? SkipEffect.Replay : SkipEffect.Block, bytes, OwnWorker: last.Worker != exitWorker);
+    }
+
+    /// <summary>A signal level above anything the event runs <paramref name="worker"/>'s functions at (at least 2).</summary>
+    public static int LevelAbove(ScriptTables tables, int worker)
+    {
+        int highest = 1;
+        var code = tables.Code;
+        for (int at = 0; at < code.Length && AtelCode.StatementAt(code, at) is { } s; at = s.End)
+            if (AtelCode.RunTarget(s, tables) is { } run && run.Worker == worker) highest = Math.Max(highest, run.Level);
+        return highest + 1;
+    }
+
+    /// <summary>The worker the event makes the player (the one that calls setWorkerAsPlayer), or -1.</summary>
+    public static int PlayerWorker(ScriptTables tables)
+    {
+        var code = tables.Code;
+        for (int at = 0; at < code.Length && AtelCode.StatementAt(code, at) is { } s; at = s.End)
+            if (s.Instructions.Any(i => i.Op == AtelCode.CallPopA && i.Operand == 0x0043) && tables.FunctionAt(s.Offset) is { } owner) return owner.Worker;
+        return -1;
+    }
+
+    /// <summary>
+    /// Classifies one statement the skip bypasses. For a scene that stays in the room, the room's own state matters too:
+    /// event variables and music are replayed, and where the player ends up (replayable only when the exit's worker is
+    /// the player, since a position call places whoever runs it).
+    /// </summary>
+    private static void Classify(ScriptTables tables, TraceStep step, List<SkippedStatement> skipped, bool sameRoom, int player, int exitWorker)
+    {
+        var s = step.Statement;
         void Add(string what, SkipEffect effect)
         {
             if (effect == SkipEffect.Replay && !Replayable(s)) { effect = SkipEffect.Block; what += " (can't be replayed: computed operands)"; }
-            skipped.Add(new SkippedStatement(worker, s.Offset, what, effect, Bytes()));
+            if (effect == SkipEffect.Replay && step.Undecided) { effect = SkipEffect.Block; what += " (on a branch the audit can't decide)"; }
+            skipped.Add(new SkippedStatement(step.Worker, s.Offset, what, effect, tables.Code.Slice(s.Offset, s.Length).ToArray()));
         }
-
         foreach (var ins in s.Instructions.Where(i => i.Op is AtelCode.Call or AtelCode.CallPopA))
         {
-            if (WarpCalls.Contains(ins.Operand)) end = (SceneExitKind.Warp, $"{BlockCalls[ins.Operand]} at w{worker:X2} {s.Offset:X4}");
-            else if (BattleCalls.Contains(ins.Operand)) end = (SceneExitKind.Battle, $"{BlockCalls[ins.Operand]} at w{worker:X2} {s.Offset:X4}");
             if (BlockCalls.TryGetValue(ins.Operand, out string? block)) Add(block, SkipEffect.Block);
             else if (ReplayCalls.TryGetValue(ins.Operand, out string? replay)) Add(replay, SkipEffect.Replay);
         }
-
         var last = s.Last;
         if (last.Op is AtelCode.PopV or AtelCode.PopVL or AtelCode.PopAr or AtelCode.PopArL)
         {
             int location = tables.VariableLocation(last.Operand);
             if (AtelCode.MomentWrite(s, tables) is int m) Add($"Set GameMoment = {m}", SkipEffect.Replay);
             else if (location == 0) Add($"save-data variable {last.Operand:X2} written", SkipEffect.Replay);
-        }
-        if (last.Op == AtelCode.Jsr) notes.Add($"w{worker:X2} {s.Offset:X4}: jumps to subroutine worker {last.Operand:X2} (not followed)");
-
-        if (s.Instructions.Any(i => AtelCode.IsRun(i.Op)))
-        {
-            if (AtelCode.RunTarget(s, tables) is { } run)
-            {
-                runs.Add((run.Worker, run.Function));
-                if (depth < MaxDepth && run.Worker >= 0 && run.Worker < tables.WorkerCount && run.Function < tables.Editor.FunctionCount(run.Worker))
-                {
-                    int entry = tables.Editor.FunctionEntry(run.Worker, run.Function);
-                    var inner = new List<SkippedStatement>();
-                    var ignored = (SceneExitKind.Unknown, "");
-                    // A function run on the scene's own worker stops at the exit too (the game's own skip function jumps there).
-                    bool own = sceneExit is { } x && x.Worker == run.Worker;
-                    Walk(tables, run.Worker, entry, own ? sceneExit!.Value.Exit : -1, gm, depth + 1, inner, notes, runs, out _, out ignored, own ? sceneExit!.Value.End : -1, sceneExit);
-                    // What a run function does to a room only matters if it leaves it; anything else carries over.
-                    skipped.AddRange(inner);
-                }
-            }
-            else notes.Add($"w{worker:X2} {s.Offset:X4}: runs a worker function chosen at run time (not followed)");
+            else if (sameRoom && location == 6) Add($"event variable {last.Operand:X2} written", SkipEffect.Replay);
         }
     }
 

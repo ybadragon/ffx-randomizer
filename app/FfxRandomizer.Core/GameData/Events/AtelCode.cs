@@ -25,6 +25,7 @@ public sealed record AtelStatement(int Offset, IReadOnlyList<AtelInstruction> In
 public static class AtelCode
 {
     public const byte Nop = 0x00, OpLAnd = 0x02, OpEq = 0x06, OpNe = 0x07, OpGt = 0x0A, OpLs = 0x0B, OpGte = 0x0E, OpLse = 0x0F, OpNot = 0x19;
+    public const byte PushY = 0x29, PopY = 0x2C;
     public const byte PopA = 0x25, PushV = 0x9F, PopV = 0xA0, PopVL = 0xA1, PushAr = 0xA2, PopAr = 0xA3, PopArL = 0xA4;
     public const byte PushI = 0xAD, PushII = 0xAE, PushF = 0xAF, Jmp = 0xB0, CJmp = 0xB1, NCJmp = 0xB2, Jsr = 0xB3, Call = 0xB5;
     public const byte PopXJmp = 0xD5, PopXCJmp = 0xD6, PopXNCJmp = 0xD7, CallPopA = 0xD8;
@@ -97,7 +98,7 @@ public static class AtelCode
     /// Evaluates a condition statement's expression (everything before its jump) if it only reads GameMoment and
     /// constants: comparisons, and/or/not. Null when it reads anything else.
     /// </summary>
-    public static bool? EvaluateMomentCondition(AtelStatement s, int gameMoment, ScriptTables tables)
+    public static bool? EvaluateMomentCondition(AtelStatement s, int gameMoment, ScriptTables tables, bool switchOnMoment = false)
     {
         var stack = new Stack<int>();
         for (int i = 0; i < s.Instructions.Count - 1; i++)
@@ -106,6 +107,7 @@ public static class AtelCode
             switch (ins.Op)
             {
                 case PushV when ins.Operand == Atel.GameMomentVariable: stack.Push(gameMoment); break;
+                case PushY when switchOnMoment: stack.Push(gameMoment); break;
                 case PushII or PushI when Constant(ins, tables) is int c: stack.Push(c); break;
                 case OpNot when stack.Count >= 1: stack.Push(stack.Pop() == 0 ? 1 : 0); break;
                 case >= 0x01 and <= 0x0F when stack.Count >= 2:
@@ -145,8 +147,14 @@ public static class AtelCode
         {
             if (ins[i].Op == PushV && ins[i].Operand == Atel.GameMomentVariable && Constant(ins[i + 1], tables) is int c) yield return c;
             if (i + 1 < ins.Count && Constant(ins[i], tables) is int d && ins[i + 1].Op == PushV && ins[i + 1].Operand == Atel.GameMomentVariable) yield return d;
+            // switch cases: "(n == case) -> jXX" (the switch subject may be GameMoment)
+            if (Constant(ins[i], tables) is int e && ins[i + 1].Op == PushY) yield return e;
         }
     }
+
+    /// <summary>Whether a statement is "switch GameMoment".</summary>
+    public static bool SwitchesOnMoment(AtelStatement s) =>
+        s.Instructions is [{ Op: PushV, Operand: Atel.GameMomentVariable }, { Op: PopY }];
 }
 
 /// <summary>

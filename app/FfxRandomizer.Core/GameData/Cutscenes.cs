@@ -34,8 +34,12 @@ public sealed record BuiltInWatcher(
 /// </summary>
 public sealed record SkippableScene(
     string Name, string Area, string EventId, int SceneWorker, SceneCode SceneStart, EventJump Exit, int MomentBelow,
-    int MessageWindow, BuiltInWatcher? BuiltIn = null, int HostWorker = -1, int MomentFrom = 0, int SkipLevel = 2)
+    int MessageWindow, BuiltInWatcher? BuiltIn = null, int HostWorker = -1, int MomentFrom = 0, int SkipLevel = 2, bool StaysInRoom = false)
 {
+    // StaysInRoom: the scene returns control in the same room, so a skip partway through would leave its actors playing
+    // on. Hold-to-skip is decided as the scene starts instead: holding the button then fills the bar before anything
+    // moves, and a full bar jumps to the end.
+
     /// <summary>The GameMoment a jump-to-scene save holds so the scene plays.</summary>
     public int Trigger => MomentBelow - 1;
 }
@@ -118,13 +122,13 @@ public static class Cutscenes
         var script = new EventScriptEditor(originalChunk);
         var tables = new ScriptTables(originalChunk);
 
-        var plans = new List<(SkippableScene Scene, int Function, int ExitJump, byte[] Replay)>();
+        var plans = new List<(SkippableScene Scene, int Function, int ExitJump, IReadOnlyList<SkippedStatement> Replay)>();
         foreach (var scene in scenes)
         {
             Check(script, tables, scene);
             var audit = Audit(tables, scene);
             if (!audit.Safe) throw new UnsafeSkipException(scene, string.Join("; ", audit.Problems()));
-            plans.Add((scene, ScenesFunction(script, scene), -1, audit.ReplayCode));
+            plans.Add((scene, ScenesFunction(script, scene), -1, audit.Replays.ToList()));
         }
         // Labels first, at original offsets; insertions move them with their code from here on.
         for (int i = 0; i < plans.Count; i++)
@@ -134,12 +138,28 @@ public static class Cutscenes
         }
 
         int firstString = mode == Hold ? AddPrompts(read, eventId, button, ebp, files) : -1;
-        foreach (var (scene, function, exitJump, replay) in plans)
+        foreach (var (scene, function, exitJump, replays) in plans)
         {
             // Where the skip goes: straight to the exit, or first through the statements it must replay.
             int target = exitJump;
-            if (replay.Length > 0) target = script.AddJump(scene.SceneWorker, script.AppendCode([.. replay, .. Atel.Goto(exitJump)]));
-            if (mode == Always) script.InsertCode(script.FunctionEntry(scene.SceneWorker, function), Guard(scene, target));
+            var replay = new List<byte>();
+            foreach (var r in replays)
+            {
+                if (!r.OwnWorker) { replay.AddRange(r.Bytes); continue; }
+                // A placement moves whoever runs it: it gets a one-statement function on its own worker, run and awaited.
+                int helper = script.AddFunction(r.Worker, script.AppendCode([.. r.Bytes, Atel.Return]));
+                replay.AddRange(Atel.Run(SceneAudit.LevelAbove(tables, r.Worker), r.Worker, helper, awaitEnd: true));
+            }
+            if (replay.Count > 0) target = script.AddJump(scene.Exit.Worker, script.AppendCode([.. replay, .. Atel.Goto(exitJump)]));
+            if (mode == Always && scene.Exit.Worker == scene.SceneWorker) script.InsertCode(script.FunctionEntry(scene.SceneWorker, function), Guard(scene, target));
+            else if (mode == Always)
+            {
+                // The exit is in another worker's code, which jump labels can't reach: the scene runs a skip function on
+                // that worker instead (above the level the scene's parts run at there), which jumps to the exit.
+                int skip = script.AddFunction(scene.Exit.Worker, script.AppendCode([.. Guard(scene, target), Atel.Return]));
+                InsertGuardedRun(script, scene, script.FunctionEntry(scene.SceneWorker, function), Atel.Run(scene.SkipLevel, scene.Exit.Worker, skip, awaitEnd: true));
+            }
+            else if (scene.StaysInRoom) AddStartCheck(script, scene, function, target, button, firstString);
             else AddWatcher(script, scene, function, exitJump, target, button, firstString);
         }
 
@@ -153,7 +173,7 @@ public static class Cutscenes
         Audit(new ScriptTables(EventFile.Read(original.ReadFile(EventPath(scene.EventId))).Chunk(EventFile.ScriptChunk)!), scene);
 
     private static SceneAuditResult Audit(ScriptTables tables, SkippableScene scene) =>
-        SceneAudit.Audit(tables, scene.SceneWorker, scene.SceneStart.Offset, scene.Exit.CodeOffset, scene.Trigger);
+        SceneAudit.Audit(tables, scene.SceneWorker, scene.SceneStart.Offset, scene.Exit.Worker, scene.Exit.CodeOffset, scene.Trigger);
 
     /// <summary>Pushes whether GameMoment is in the scene's first-visit range.</summary>
     public static byte[] MomentCondition(SkippableScene scene) => scene.MomentFrom > 0
@@ -176,9 +196,8 @@ public static class Cutscenes
                 throw new EventMismatchException(scene, $"the code at {code.Offset:X4} isn't {Convert.ToHexString(code.Expected)}");
         if (scene.Exit.Jump >= 0 && script.JumpTarget(scene.Exit.Worker, scene.Exit.Jump) != scene.Exit.CodeOffset)
             throw new EventMismatchException(scene, $"w{scene.Exit.Worker:X2} j{scene.Exit.Jump:X2} doesn't point at {scene.Exit.CodeOffset:X4}");
-        if (scene.Exit.Worker != scene.SceneWorker) throw new EventMismatchException(scene, "the exit must be in the scene's own worker");
-        if (tables.FunctionAt(scene.Exit.CodeOffset) is not { Worker: var owner } || owner != scene.SceneWorker)
-            throw new EventMismatchException(scene, $"the exit at {scene.Exit.CodeOffset:X4} isn't in w{scene.SceneWorker:X2}'s code");
+        if (tables.FunctionAt(scene.Exit.CodeOffset) is not { Worker: var owner } || owner != scene.Exit.Worker)
+            throw new EventMismatchException(scene, $"the exit at {scene.Exit.CodeOffset:X4} isn't in w{scene.Exit.Worker:X2}'s code");
         if (scene.BuiltIn is { } w)
         {
             if (script.FunctionEntry(scene.SceneWorker, w.SkipFunction) != w.SkipStart.Offset || script.FunctionEntry(w.Worker, w.StopFunction) != w.StopStart.Offset)
@@ -290,14 +309,14 @@ public static class Cutscenes
         {
             if (scene.HostWorker < 0) throw new InvalidOperationException($"{scene.Name} needs a host worker for its skip watcher.");
             hostWorker = scene.HostWorker;
-            skipFunction = script.AddFunction(scene.SceneWorker, script.AppendCode([.. Guard(scene, target), Atel.Return]));
+            skipFunction = script.AddFunction(scene.Exit.Worker, script.AppendCode([.. Guard(scene, target), Atel.Return]));
             watchFunction = -1;
             beforeSkip = [];
         }
 
         int count = script.JumpCount(hostWorker);
         var labels = new WatcherLabels(Loop: count, Held: count + 1, Cancel: count + 2, Idle: count + 3);
-        byte[] watcher = WatcherCode(window, button.Index, firstString, firstString + 1, beforeSkip, scene.SceneWorker, skipFunction, labels, out var at,
+        byte[] watcher = WatcherCode(window, button.Index, firstString, firstString + 1, beforeSkip, scene.Exit.Worker, skipFunction, labels, out var at,
             scene.BuiltIn is null ? scene.SkipLevel : 2);
         int start = script.AppendCode(watcher);
         foreach (int offset in new[] { at.Loop, at.Held, at.Cancel, at.Idle }) script.AddJump(hostWorker, start + offset);
@@ -314,16 +333,59 @@ public static class Cutscenes
             watchFunction = script.AddFunction(hostWorker, start);
             int stop = script.AddFunction(hostWorker, script.AppendCode([.. closePrompt, Atel.DirectReturn, Atel.Return]));
             // Stop the watcher when the scene reaches its exit.
-            script.InsertCode(script.JumpTarget(scene.SceneWorker, exitJump), Atel.Run(2, hostWorker, stop, awaitEnd: false));
+            script.InsertCode(script.JumpTarget(scene.Exit.Worker, exitJump), Atel.Run(2, hostWorker, stop, awaitEnd: false));
             // Start it with the scene's first instruction, only when the scene plays (the function may run at other
-            // moments too): if the moment is right run the watcher, then carry on with the original first instruction.
-            byte[] startWatcher = Atel.Run(1, hostWorker, watchFunction, awaitEnd: false);
-            byte[] condition = MomentCondition(scene);
-            int length = condition.Length + 3 + startWatcher.Length;
-            int after = script.JumpCount(scene.SceneWorker);
-            script.InsertCode(entry, [.. condition, .. Atel.GotoUnless(after), .. startWatcher]);
-            script.AddJump(scene.SceneWorker, entry + length);
+            // moments too).
+            InsertGuardedRun(script, scene, entry, Atel.Run(1, hostWorker, watchFunction, awaitEnd: false));
         }
+    }
+
+    /// <summary>
+    /// Inserts at <paramref name="entry"/>: if GameMoment is in the scene's range, <paramref name="run"/>; then the original
+    /// first instruction, which gets a new jump label for the "not in range" branch.
+    /// </summary>
+    private static void InsertGuardedRun(EventScriptEditor script, SkippableScene scene, int entry, byte[] run)
+    {
+        byte[] condition = MomentCondition(scene);
+        int length = condition.Length + 3 + run.Length;
+        int after = script.JumpCount(scene.SceneWorker);
+        script.InsertCode(entry, [.. condition, .. Atel.GotoUnless(after), .. run]);
+        script.AddJump(scene.SceneWorker, entry + length);
+    }
+
+    /// <summary>
+    /// Hold-to-skip for a scene that stays in the room, decided as it starts, in the scene's own worker before anything
+    /// moves: if the moment is right and the skip button is down, show the bar and keep checking; letting go closes the
+    /// box and plays the scene, a full bar closes it and jumps to <paramref name="target"/> (the exit, or the replay
+    /// before it). Otherwise the scene starts as usual with no delay.
+    /// </summary>
+    private static void AddStartCheck(EventScriptEditor script, SkippableScene scene, int sceneFunction, int target, SkipButton button, int firstString)
+    {
+        int window = scene.MessageWindow;
+        int count = script.JumpCount(scene.SceneWorker);
+        int cancel = count, carryOn = count + 1;
+        var code = new List<byte>();
+        code.AddRange([.. MomentCondition(scene), .. Atel.GotoUnless(carryOn)]);
+        code.AddRange([.. Atel.IsDown(button.Index), .. Atel.GotoUnless(carryOn)]);
+        int firstBar = firstString + 1;
+        code.AddRange(ShowPrompt(window, firstBar));
+        int polls = HoldFrames / PollFrames, pollsPerStep = polls / (Steps + 1);
+        for (int poll = 1; poll <= polls; poll++)
+        {
+            code.AddRange(Atel.Call(Atel.Wait, PollFrames));
+            code.AddRange([.. Atel.IsDown(button.Index), .. Atel.GotoUnless(cancel)]);
+            if (poll % pollsPerStep == 0 && poll / pollsPerStep <= Steps) code.AddRange(ShowPrompt(window, firstBar + poll / pollsPerStep));
+        }
+        code.AddRange(ClosePrompt(window));
+        code.AddRange(Atel.Goto(target));
+        int cancelAt = code.Count;
+        code.AddRange(ClosePrompt(window));
+        code.AddRange(Atel.Goto(carryOn));
+
+        int entry = script.FunctionEntry(scene.SceneWorker, sceneFunction);
+        script.InsertCode(entry, [.. code]);
+        script.AddJump(scene.SceneWorker, entry + cancelAt);
+        script.AddJump(scene.SceneWorker, entry + code.Count);
     }
 
     /// <summary>Where code at <paramref name="original"/> (an offset in the unedited code) is now.</summary>
