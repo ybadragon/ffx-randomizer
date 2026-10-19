@@ -26,6 +26,13 @@ public class CutsceneTests
 
     private static readonly SkippableScene Campfire = Cutscenes.All[0];
 
+    private static int Occurrences(byte[] haystack, byte[] needle)
+    {
+        int count = 0;
+        for (int at = haystack.AsSpan().IndexOf(needle); at >= 0; at = haystack.AsSpan(at + 1).IndexOf(needle) is int next and >= 0 ? at + 1 + next : -1) count++;
+        return count;
+    }
+
     [Theory]
     [InlineData("hold", "select")]
     [InlineData("hold", "r1")]
@@ -53,13 +60,17 @@ public class CutsceneTests
         var after = new EventScriptEditor(EventFile.Read(ebp).Chunk(0)!);
         var watcher = Campfire.BuiltIn!;
 
-        // Same functions; the watch function now starts in new code that tests R1 (bit 3) and runs w0D::f03 at level 2.
+        // Same functions; the watch function now starts in new code that tests whether R1 (button 3) is down, polls it,
+        // never uses the press-only 0x0046 test, and runs w0D::f03 at level 2.
         Assert.Equal(before.FunctionCount(watcher.Worker), after.FunctionCount(watcher.Worker));
         Assert.Equal(before.JumpCount(watcher.Worker) + 3, after.JumpCount(watcher.Worker));
         int start = after.FunctionEntry(watcher.Worker, watcher.WatchFunction);
         Assert.True(start >= before.CodeLength);
         byte[] code = after.Code(start, after.CodeLength - start).ToArray();
-        Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)[.. Atel.Held(1 << 3)]) == 0);
+        Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.IsDown(3)) == 0);
+        Assert.Equal(1 + Cutscenes.HoldFrames / Cutscenes.PollFrames, Occurrences(code, Atel.IsDown(3)));
+        Assert.Equal(0, Occurrences(code, [0xB5, 0x46, 0x00]));
+        Assert.Equal(1, Occurrences(code, Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0))); // opened once
         Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.Run(2, 0x0D, watcher.SkipFunction, awaitEnd: true)) > 0);
         // The game's skip function starts with the first-visit guard; its stop function closes the prompt first.
         Assert.Equal(Cutscenes.Guard(Campfire), after.Code(after.FunctionEntry(0x0D, watcher.SkipFunction), Cutscenes.Guard(Campfire).Length).ToArray());
@@ -86,7 +97,8 @@ public class CutsceneTests
         byte[] english = files[Cutscenes.TextPath("new_uspc", "znkd0600")];
         int last = EventText.Count(english) - 1;
         int offset = BitConverter.ToUInt16(english, last * 8);
-        Assert.Equal([0x0B, 0x39], english[(offset + us.Encode("Hold ").Length)..][..2]); // the Select button icon
+        Assert.Equal([0x09, 0x30], english[offset..][..2]);                                    // {TIME:00}: show at once
+        Assert.Equal([0x0B, 0x39], english[(offset + 2 + us.Encode("Hold ").Length)..][..2]); // the Select button icon
         Assert.Equal("Hold to skip [#####]", us.Decode(english, offset)); // the icon isn't text, so it decodes to nothing
     }
 
@@ -148,7 +160,7 @@ public class CutsceneTests
         Assert.Equal("select", SkipButtons.FromXbox("Back")!.Id);
         Assert.Equal("x", SkipButtons.FromXbox("A")!.Id);
         Assert.Equal("square", SkipButtons.FromXbox("X")!.Id);
-        Assert.Equal(1 << 8, SkipButtons.ById("select").Mask);
+        Assert.Equal(8, SkipButtons.ById("select").Index);
         Assert.Null(SkipButtons.FromXbox("LeftThumb"));
     }
 }

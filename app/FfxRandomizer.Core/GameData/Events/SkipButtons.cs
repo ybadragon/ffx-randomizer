@@ -1,13 +1,10 @@
 namespace FfxRandomizer.Core.GameData.Events;
 
 /// <summary>A controller button the skip watcher can listen for.</summary>
-/// <param name="Index">The game's controllerButton number; the held-buttons bitfield has it at bit <c>1 &lt;&lt; Index</c>.</param>
+/// <param name="Index">The game's controllerButton number, as <see cref="Atel.IsDown"/> takes it.</param>
 /// <param name="Icon">The text control code argument (after 0x0B) that draws this button, when known; null shows <paramref name="Name"/>.</param>
 /// <param name="AdvancesDialogue">Also skips voiced lines and closes text boxes in vanilla scripts.</param>
-public sealed record SkipButton(string Id, int Index, string Label, string Name, byte? Icon, bool AdvancesDialogue = false)
-{
-    public int Mask => 1 << Index;
-}
+public sealed record SkipButton(string Id, int Index, string Label, string Name, byte? Icon, bool AdvancesDialogue = false);
 
 /// <summary>
 /// The buttons offered for skipping, PlayStation names with their Xbox equivalent. Button numbers from FFXDataParser's

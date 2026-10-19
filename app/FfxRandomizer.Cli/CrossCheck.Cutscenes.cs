@@ -53,7 +53,7 @@ internal static partial class CrossCheck
             string window = $"msgWindow={scene.MessageWindow} [{scene.MessageWindow:X2}h]";
             foreach (string expected in new[]
             {
-                $"Common.HeldButtonsBitfield [0046h] & ",
+                $"call Common.setMessageBoxTransparent [0066h]({window}, transparent=false",
                 $"call Common.displayFieldString [0064h]({window}",
                 $"call Common.?closeMessage [006Bh]({window})",
                 $"run w{scene.SceneWorker:X2}::f{scene.BuiltIn?.SkipFunction ?? 0:X2} at level 2, await end",
@@ -62,8 +62,14 @@ internal static partial class CrossCheck
                 if (!ours.Contains(expected, StringComparison.Ordinal)) yield return $"{scene.EventId}: no \"{expected}\" in the inserted code";
             int prompts = PromptLine().Matches(ours).Count;
             if (prompts != Cutscenes.Steps + 1) yield return $"{scene.EventId}: the parser shows {prompts} hold-to-skip prompts, expected {Cutscenes.Steps + 1}";
-            if (!ours.Contains($"[{button.Mask:X2}h]", StringComparison.Ordinal) && !ours.Contains($"[{button.Mask:X4}h]", StringComparison.Ordinal))
-                yield return $"{scene.EventId}: the held-button test doesn't use {button.Label}'s mask {button.Mask:X}";
+            // The hold test must be the "button is down" call on the chosen button, polled once plus once per poll step,
+            // never the press-only 0x0046; the prompt is shown once.
+            int downTests = DownTest().Matches(ours).Count(m => m.Groups[1].Value == $"{button.Index:X2}");
+            if (downTests != 1 + Cutscenes.HoldFrames / Cutscenes.PollFrames)
+                yield return $"{scene.EventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {1 + Cutscenes.HoldFrames / Cutscenes.PollFrames}";
+            if (ours.Contains("[0046h]", StringComparison.Ordinal)) yield return $"{scene.EventId}: the watcher uses the press-only 0x0046 test";
+            int shows = ours.Split('\n').Count(l => l.Contains($"?showMessage [006Ah]({window}", StringComparison.Ordinal));
+            if (shows != 1) yield return $"{scene.EventId}: the prompt is shown {shows} times, expected once";
         }
 
         static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing
@@ -90,6 +96,9 @@ internal static partial class CrossCheck
     [GeneratedRegex(@"&?priv[0-9A-F]{4,}|(?<=privateDataaddr=)[0-9A-F]+|(?<=^w[0-9A-F]{2}:\{.*)(Functions|Jumps)=\d+\[[0-9A-F]+h\]")]
     private static partial Regex PrivateAddress();
 
-    [GeneratedRegex(@"string=""Hold .*? to skip  ")]
+    [GeneratedRegex(@"controllerButtonPressed1\? \[004Ch\]\(controllerButton=[^\[]*\[([0-9A-F]{2})h\]\)")]
+    private static partial Regex DownTest();
+
+    [GeneratedRegex(@"string=""(\{TIME:00\})?Hold .*? to skip  ")]
     private static partial Regex PromptLine();
 }

@@ -38,11 +38,17 @@ public static class Cutscenes
 {
     public const string Original = "orig", Hold = "hold", Always = "always";
 
-    /// <summary>The hold-to-skip bar fills in this many steps, one every <see cref="FramesPerStep"/> frames (60 frames a second).</summary>
-    public const int Steps = 5, FramesPerStep = 12;
+    /// <summary>
+    /// Holding skips after <see cref="HoldFrames"/> frames (60 a second). The button is checked every
+    /// <see cref="PollFrames"/> frames, and the prompt's bar fills in <see cref="Steps"/> steps.
+    /// </summary>
+    public const int HoldFrames = 60, PollFrames = 2, Steps = 5;
 
     // Where the prompt sits: top left, clear of the scene's own text (which uses window 0, low on the screen).
     private const int PromptX = 16, PromptY = 16;
+
+    /// <summary>The {TIME:00} text control code the game's own button prompts start with: show the whole text at once.</summary>
+    private static readonly byte[] ShowInstantly = [0x09, 0x30];
 
     public static IReadOnlyList<SkippableScene> All { get; } =
     [
@@ -115,26 +121,34 @@ public static class Cutscenes
     }
 
     /// <summary>
-    /// The watcher. Each frame: if the skip button isn't held, wait a frame and look again. While it is held, show the
-    /// prompt and fill its bar one step every <see cref="FramesPerStep"/> frames, checking the button before each step;
-    /// letting go closes the prompt and starts over. A full bar closes the prompt and runs the scene's skip function at
-    /// level 2, which preempts the scene and jumps to its exit.
+    /// The watcher, in the shape the game's own button prompts use (the S.S. Winno Jecht Shot tutorial): open the prompt
+    /// once, then poll the button with short waits.
+    /// <list type="bullet">
+    /// <item>Idle: if the skip button isn't down, wait a frame and look again.</item>
+    /// <item>Held: open the prompt (position, solid box, text, no text flags, show), then check the button every
+    /// <see cref="PollFrames"/> frames; the bar text is swapped (without reopening) every <see cref="HoldFrames"/> /
+    /// <see cref="Steps"/> frames. Letting go closes the prompt and returns to idle.</item>
+    /// <item>After <see cref="HoldFrames"/> frames held: close the prompt and run the scene's skip function at level 2,
+    /// which preempts the scene and jumps to its exit. The skip only counts polls, so it can't depend on the prompt.</item>
+    /// </list>
+    /// The polls are written out one after another, so no variable is needed to count them.
     /// </summary>
-    internal static byte[] WatcherCode(int window, int mask, int firstString, byte[] beforeSkip, int sceneWorker, int skipFunction,
+    internal static byte[] WatcherCode(int window, int button, int firstString, byte[] beforeSkip, int sceneWorker, int skipFunction,
         int loopJump, int cancelJump, int idleJump, out int cancelAt, out int idleAt)
     {
         var code = new List<byte>();
-        code.AddRange([.. Atel.Held(mask), .. Atel.GotoUnless(idleJump)]);
+        code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(idleJump)]);
         code.AddRange(Atel.Call(Atel.PositionMessage, window, PromptX, PromptY, 0));
-        for (int step = 0; step <= Steps; step++)
+        code.AddRange(Atel.Call(Atel.SetMessageBoxTransparent, window, 0));
+        code.AddRange(Atel.Call(Atel.DisplayFieldString, window, firstString));
+        code.AddRange(Atel.Call(Atel.SetTextFlags, window, 0));
+        code.AddRange(Atel.Call(Atel.ShowMessage, window, 0));
+        int polls = HoldFrames / PollFrames, pollsPerStep = polls / Steps;
+        for (int poll = 1; poll <= polls; poll++)
         {
-            if (step > 0)
-            {
-                code.AddRange(Atel.Call(Atel.Wait, FramesPerStep));
-                code.AddRange([.. Atel.Held(mask), .. Atel.GotoUnless(cancelJump)]);
-            }
-            code.AddRange(Atel.Call(Atel.DisplayFieldString, window, firstString + step));
-            code.AddRange(Atel.Call(Atel.ShowMessage, window, 0));
+            code.AddRange(Atel.Call(Atel.Wait, PollFrames));
+            code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(cancelJump)]);
+            if (poll % pollsPerStep == 0) code.AddRange(Atel.Call(Atel.DisplayFieldString, window, firstString + poll / pollsPerStep));
         }
         code.AddRange(Atel.Call(Atel.CloseMessage, window));
         code.AddRange(beforeSkip);
@@ -174,7 +188,7 @@ public static class Cutscenes
         }
 
         int jumps = script.JumpCount(hostWorker);
-        byte[] watcher = WatcherCode(window, button.Mask, firstString, beforeSkip, scene.SceneWorker, skipFunction,
+        byte[] watcher = WatcherCode(window, button.Index, firstString, beforeSkip, scene.SceneWorker, skipFunction,
             loopJump: jumps, cancelJump: jumps + 1, idleJump: jumps + 2, out int cancelAt, out int idleAt);
         int start = script.AppendCode(watcher);
         script.AddJump(hostWorker, start);
@@ -245,7 +259,7 @@ public static class Cutscenes
         for (int step = 0; step <= Steps; step++)
         {
             string bar = latin ? $"[{new string('#', step)}{new string('-', Steps - step)}]" : new string('*', step) + new string('-', Steps - step);
-            yield return [.. charset.Encode("Hold "), .. buttonText, .. charset.Encode(" to skip  " + bar)];
+            yield return [.. ShowInstantly, .. charset.Encode("Hold "), .. buttonText, .. charset.Encode(" to skip  " + bar)];
         }
     }
 }
