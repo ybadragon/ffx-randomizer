@@ -47,6 +47,12 @@ public sealed class RandomizerContext(VbfArchive original, RandomizerSettings se
         return bytes;
     }
 
+    /// <summary>
+    /// Replaces the working copy of a game file, for edits that change its length (like inserting event code). Later
+    /// <see cref="Edit"/> calls return the replacement. The archive only accepts files that keep their 64 KB block count.
+    /// </summary>
+    public void Replace(string archivePath, byte[] bytes) => _changed[archivePath] = bytes;
+
     /// <summary>Adds one entry (any serializable object, camelCased) to a spoiler section.</summary>
     public void Spoil(string section, object entry) => SectionList(section).Add(ToNode(entry));
 
