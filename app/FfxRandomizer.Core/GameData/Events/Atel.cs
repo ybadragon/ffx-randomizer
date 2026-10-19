@@ -16,6 +16,9 @@ public static class Atel
     public const int Wait = 0x0000, DisplayFieldString = 0x0064, PositionMessage = 0x0065, SetMessageBoxTransparent = 0x0066,
         ShowMessage = 0x006A, CloseMessage = 0x006B, SetTextFlags = 0x009D;
 
+    /// <summary>waitForText(window, 1): after closeMessage, waits until the box has finished closing (Thunder Plains, Maechen).</summary>
+    public const int WaitForText = 0x0084;
+
     /// <summary>
     /// Whether a controller button is down right now (FFXDataParser calls it "controllerButtonPressed1?"). The game uses
     /// it for held input: Bikanel sets "moving" every frame from it on the d-pad together with the analog stick, and the

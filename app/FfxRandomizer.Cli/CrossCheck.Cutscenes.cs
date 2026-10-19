@@ -69,7 +69,9 @@ internal static partial class CrossCheck
                 yield return $"{scene.EventId}: {downTests} button-down tests on {button.Label} (button {button.Index:X2}h), expected {1 + Cutscenes.HoldFrames / Cutscenes.PollFrames}";
             if (ours.Contains("[0046h]", StringComparison.Ordinal)) yield return $"{scene.EventId}: the watcher uses the press-only 0x0046 test";
             int shows = ours.Split('\n').Count(l => l.Contains($"?showMessage [006Ah]({window}", StringComparison.Ordinal));
-            if (shows != 1) yield return $"{scene.EventId}: the prompt is shown {shows} times, expected once";
+            if (shows != Cutscenes.Steps + 1) yield return $"{scene.EventId}: the prompt is shown {shows} times, expected {Cutscenes.Steps + 1} (open, then one redraw per step)";
+            int waits = ours.Split('\n').Count(l => l.Contains($"waitForText [0084h]({window}, p2=1", StringComparison.Ordinal));
+            if (waits != 2) yield return $"{scene.EventId}: {waits} waits for the prompt to close, expected 2 (skip and release)";
         }
 
         static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing

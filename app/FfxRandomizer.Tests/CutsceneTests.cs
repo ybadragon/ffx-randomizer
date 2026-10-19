@@ -70,7 +70,14 @@ public class CutsceneTests
         Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.IsDown(3)) == 0);
         Assert.Equal(1 + Cutscenes.HoldFrames / Cutscenes.PollFrames, Occurrences(code, Atel.IsDown(3)));
         Assert.Equal(0, Occurrences(code, [0xB5, 0x46, 0x00]));
-        Assert.Equal(1, Occurrences(code, Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0))); // opened once
+        // Shown, then redrawn once per bar step; closed and waited for on both the skip and the release paths.
+        Assert.Equal(1 + Cutscenes.Steps, Occurrences(code, Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0)));
+        byte[] closeAndWait = [.. Atel.Call(Atel.CloseMessage, Campfire.MessageWindow), .. Atel.Call(Atel.WaitForText, Campfire.MessageWindow, 1)];
+        Assert.Equal(2, Occurrences(code, closeAndWait));
+        byte[] skip = Atel.Run(2, 0x0D, watcher.SkipFunction, awaitEnd: true);
+        int skipAt = code.AsSpan().IndexOf(skip);
+        Assert.True(code.AsSpan(0, skipAt).LastIndexOf(closeAndWait) > code.AsSpan(0, skipAt).LastIndexOf(Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0)),
+            "the prompt is closed after its last redraw and before the skip");
         Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.Run(2, 0x0D, watcher.SkipFunction, awaitEnd: true)) > 0);
         // The game's skip function starts with the first-visit guard; its stop function closes the prompt first.
         Assert.Equal(Cutscenes.Guard(Campfire), after.Code(after.FunctionEntry(0x0D, watcher.SkipFunction), Cutscenes.Guard(Campfire).Length).ToArray());
