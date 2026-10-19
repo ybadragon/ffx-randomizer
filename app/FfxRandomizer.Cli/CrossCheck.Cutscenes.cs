@@ -26,6 +26,8 @@ internal static partial class CrossCheck
             string eventId = group.Key;
             var (ours, listingProblems, lines, changes) = CompareListing(original, files, eventId, mode);
             foreach (string p in listingProblems) yield return p;
+            // Worker numbers as they are in the edited event (the soft reset may have added a worker before them).
+            int W(int worker) => Renumbered(original, eventId, files[Cutscenes.EventPath(eventId)], worker);
 
             // Each scene's first-visit guard (both bounds when it has a lower one), wherever the mode puts it.
             foreach (var scene in group)
@@ -44,13 +46,13 @@ internal static partial class CrossCheck
             var expectedLines = new List<string> { $"call Common.setMessageBoxTransparent [0066h]({window}, transparent=false", $"call Common.displayFieldString [0064h]({window}", $"call Common.?closeMessage [006Bh]({window})", "Hold " };
             foreach (var scene in watched)
                 expectedLines.Add(scene.BuiltIn is { } b
-                    ? $"run w{scene.SceneWorker:X2}::f{b.SkipFunction:X2} at level 2, await end"
-                    : $"run w{scene.Exit.Worker:X2}::f");
+                    ? $"run w{W(scene.SceneWorker):X2}::f{b.SkipFunction:X2} at level 2, await end"
+                    : $"run w{W(scene.Exit.Worker):X2}::f");
             foreach (string expected in expectedLines)
                 if (!ours.Contains(expected, StringComparison.Ordinal)) yield return $"{eventId}: no \"{expected}\" in the inserted code";
             foreach (var scene in watched.Where(s => s.BuiltIn is null))
-                if (!Regex.IsMatch(ours, $@"run w{scene.Exit.Worker:X2}::f[0-9A-F]{{2}} at level {scene.SkipLevel}, await end"))
-                    yield return $"{eventId} {scene.Name}: no skip run on w{scene.Exit.Worker:X2} at level {scene.SkipLevel}";
+                if (!Regex.IsMatch(ours, $@"run w{W(scene.Exit.Worker):X2}::f[0-9A-F]{{2}} at level {scene.SkipLevel}, await end"))
+                    yield return $"{eventId} {scene.Name}: no skip run on w{W(scene.Exit.Worker):X2} at level {scene.SkipLevel}";
 
             int polls = Cutscenes.HoldFrames / Cutscenes.PollFrames;
             int prompts = PromptLine().Matches(ours).Count;
@@ -75,9 +77,9 @@ internal static partial class CrossCheck
             // The inserted code starts each scene's watcher (on its host, at level 1).
             foreach (var scene in watched)
             {
-                string start = $"run w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}::f";
+                string start = $"run w{W(scene.BuiltIn?.Worker ?? scene.HostWorker):X2}::f";
                 if (!ours.Split('\n').Any(l => l.Contains(start, StringComparison.Ordinal) && l.Contains("at level 1;", StringComparison.Ordinal)))
-                    yield return $"{eventId} {scene.Name}: nothing starts the watcher on w{scene.BuiltIn?.Worker ?? scene.HostWorker:X2}";
+                    yield return $"{eventId} {scene.Name}: nothing starts the watcher on w{W(scene.BuiltIn?.Worker ?? scene.HostWorker):X2}";
             }
         }
     }
@@ -94,14 +96,24 @@ internal static partial class CrossCheck
         var problems = new List<string>();
         string path = Cutscenes.EventPath(eventId);
         // The listings, unless the caller parsed a batch of events already.
+        // An event the soft reset gave a worker of its own has its later workers renumbered; it is compared with the
+        // original renumbered the same way, so only the added code (and the added worker's header line) differ.
+        var (baseline, ownWorker) = Baseline(original, eventId, files[path]);
+        // The listings, unless the caller parsed a batch of events already.
         if (vanillaOut is null || patchedOut is null)
         {
-            (vanillaOut, var vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", eventId);
+            var overlay = ownWorker ? new Dictionary<string, byte[]> { [path] = baseline } : new Dictionary<string, byte[]>();
+            (vanillaOut, var vanillaErrors) = RunParser(overlay, "PARSE_EVENT", eventId);
             (patchedOut, var patchedErrors) = RunParser(files, "PARSE_EVENT", eventId);
             problems.AddRange(vanillaErrors.Concat(patchedErrors).Select(e => $"{eventId}: parser error: {e}"));
         }
+        if (ownWorker)
+        {
+            var also = ignore ?? (_ => false);
+            ignore = l => also(l) || WorkerHeaderLine().IsMatch(l);
+        }
 
-        var changes = CutsceneSkipFeature.ChangedCode(original.ReadFile(path), files[path]);
+        var changes = CutsceneSkipFeature.ChangedCode(baseline, files[path]);
         var lines = patchedOut.Replace("\r", "").Split('\n');
         bool Ours(string line) => CodeOffset(line) is int at && changes.Inserted.Any(r => at >= r.Offset && at < r.Offset + r.Length);
         // Instructions blanked out by NOPs: vanilla shows the original instruction, and the parser folds the NOPs into
@@ -127,11 +139,40 @@ internal static partial class CrossCheck
         var patched = Normalize(lines.Where(l => !Ours(l) && !ignore(l)).Select(Unblanked)).ToList();
         var diff = vanilla.Except(patched).Concat(patched.Except(vanilla)).ToList();
         if (diff.Count > 0 || vanilla.Count != patched.Count)
-            problems.Add($"{eventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{diff.FirstOrDefault()}\"");
+            problems.Add($"{eventId}: {diff.Count} line(s) outside the inserted code differ from vanilla (vanilla {vanilla.Count}, patched {patched.Count}), e.g. \"{string.Join("\" / \"", diff.Take(4))}\"");
         return (ours, problems, lines, changes);
     }
 
+    /// <summary>
+    /// What an edited event is compared with: the original, or for an event the soft reset gave a worker of its own,
+    /// the original with the same worker references renumbered (and whether it is that).
+    /// </summary>
+    private static (byte[] Bytes, bool OwnWorker) Baseline(VbfArchive original, string eventId, byte[] final)
+    {
+        byte[] bytes = original.ReadFile(Cutscenes.EventPath(eventId));
+        int Workers(byte[] ebp) => new EventScriptEditor(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!).WorkerCount;
+        if (Workers(final) == Workers(bytes)) return (bytes, false);
+        return SoftReset.RenumberedOnly(bytes, SoftReset.CutsceneWorkers(eventId)) is { } renumbered ? (renumbered.Bytes, true) : (bytes, false);
+    }
+
+    /// <summary>Where a worker is in the edited event: one up from the soft reset's own worker on.</summary>
+    private static int Renumbered(VbfArchive original, string eventId, byte[] final, int worker)
+    {
+        byte[] bytes = original.ReadFile(Cutscenes.EventPath(eventId));
+        return Baseline(original, eventId, final).OwnWorker && SoftReset.RenumberedOnly(bytes, SoftReset.CutsceneWorkers(eventId)) is { } r && worker >= r.Index
+            ? worker + 1 : worker;
+    }
+
+    /// <summary>Lines an added worker changes: worker headers and count, and addresses after the worker headers.</summary>
+    [GeneratedRegex(@"^w[0-9A-F]{2}: \{|Workers Total|^Script Code Start Address:|^Variables \(\d+ at offset")]
+    private static partial Regex WorkerHeaderLine();
+
+    /// <summary>The type the parser shows after a worker reference, looked up by number (which the baseline renumbers).</summary>
+    [GeneratedRegex(@"(?<=w[0-9A-F]{2}) ?\((Subroutine|FieldObject|PlayerEdge|PlayerZone|Scenario|Edge|Zone)\)")]
+    private static partial Regex WorkerTypeName();
+
     private static IEnumerable<string> Normalize(IEnumerable<string> listing) => listing
+        .Select(l => WorkerTypeName().Replace(l, ""))
         .Select(l => EventLabel().Replace(l, "").Replace(" ", ""))
         .Select(l => JumpTarget().Replace(l, ""))
         .Select(l => PrivateAddress().Replace(l, "priv"))

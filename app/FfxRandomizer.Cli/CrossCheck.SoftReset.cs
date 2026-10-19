@@ -25,7 +25,10 @@ internal static partial class CrossCheck
             .Concat(Cutscenes.ByEvent.Select(g => g.Key).Where(covered.Contains))
             .Distinct().Order(StringComparer.Ordinal).ToList();
 
-        var (vanillaAll, vanillaErrors) = RunParser(new Dictionary<string, byte[]>(), "PARSE_EVENT", sample);
+        // Events given a worker of their own are compared with the original renumbered the same way (see Baseline).
+        var baselines = sample.Select(id => (Path: Cutscenes.EventPath(id), Baseline: Baseline(original, id, files[Cutscenes.EventPath(id)])))
+            .Where(b => b.Baseline.OwnWorker).ToDictionary(b => b.Path, b => b.Baseline.Bytes);
+        var (vanillaAll, vanillaErrors) = RunParser(baselines, "PARSE_EVENT", sample);
         var (patchedAll, patchedErrors) = RunParser(files, "PARSE_EVENT", sample);
         foreach (string e in vanillaErrors.Concat(patchedErrors)) yield return $"soft reset: parser error: {e}";
         var vanilla = SplitListings(vanillaAll);

@@ -39,10 +39,9 @@ public class SoftResetTests
 
     [Theory]
     [InlineData("slik1100")] // an empty chunk
-    [InlineData("kami0000")]
-    [InlineData("bsil0600")] // has a skippable scene
+    [InlineData("znkd1300")] // has a skippable scene
     [InlineData("bltz0002")] // holds the Blitzball tables
-    public void The_watcher_replaces_an_idle_main_and_leaves_the_rest_alone(string eventId)
+    public void The_watcher_replaces_an_unused_Scenario_main_and_leaves_the_rest_alone(string eventId)
     {
         if (Original.Value is not { } original) return;
 
@@ -54,11 +53,47 @@ public class SoftResetTests
         Assert.Equal(VbfArchive.BlocksFor((ulong)before.Length), VbfArchive.BlocksFor((ulong)after.Length));
         // Only the code and the tables after it grow (the watcher is under 1 KB).
         Assert.InRange(after.Length - before.Length, 1, 1024);
-        // The watcher's main isn't a worker the scene skip uses there.
-        var script = new EventScriptEditor(EventFile.Read(after).Chunk(EventFile.ScriptChunk)!);
+        // The host is a Scenario the scene skip doesn't use.
+        var tables = new ScriptTables(EventFile.Read(after).Chunk(EventFile.ScriptChunk)!);
+        var script = tables.Editor;
         var host = Enumerable.Range(0, script.WorkerCount).Single(w => script.FunctionCount(w) > 1 && script.JumpCount(w) > 0
             && script.FunctionEntry(w, 1) == script.JumpTarget(w, script.JumpCount(w) - 1) && script.FunctionEntry(w, 1) >= script.CodeLength - SoftReset.WatcherCode(0).Length);
+        Assert.Equal(4, tables.WorkerType(host));
         Assert.DoesNotContain(host, SoftReset.CutsceneWorkers(eventId));
+    }
+
+    [Theory]
+    [InlineData("kami0000")]
+    [InlineData("bsil0600")] // has a skippable scene
+    [InlineData("bsvr0000")] // 46 references to renumber
+    public void Without_an_unused_Scenario_the_watcher_gets_a_worker_of_its_own(string eventId)
+    {
+        if (Original.Value is not { } original) return;
+
+        byte[] before = original.ReadFile(Cutscenes.EventPath(eventId));
+        var (after, reason) = SoftReset.Apply(before, SoftReset.CutsceneWorkers(eventId));
+        Assert.True(after is not null, reason);
+        Assert.True(SoftResetFeature.HasWatcher(after));
+        Assert.Empty(SoftReset.CheckOwnWorker(before, after));
+        Assert.Equal(VbfArchive.BlocksFor((ulong)before.Length), VbfArchive.BlocksFor((ulong)after.Length));
+
+        var b = new ScriptTables(EventFile.Read(before).Chunk(EventFile.ScriptChunk)!);
+        var a = new ScriptTables(EventFile.Read(after).Chunk(EventFile.ScriptChunk)!);
+        int index = SoftReset.NewWorkerPlan(b).Index;
+        Assert.Equal(b.WorkerCount + 1, a.WorkerCount);
+        Assert.Equal(4, a.WorkerType(index));
+        // It goes after the last FieldObject or Scenario, so the types stay in order.
+        Assert.All(Enumerable.Range(0, index), w => Assert.Contains(a.WorkerType(w), new[] { 1, 4 }));
+        Assert.All(Enumerable.Range(index + 1, a.WorkerCount - index - 1), w => Assert.DoesNotContain(a.WorkerType(w), new[] { 1, 4 }));
+
+        // Breaking one renumbered reference is noticed.
+        var patch = SoftReset.NewWorkerPlan(b).Patches.First();
+        var file = EventFile.Read(after);
+        byte[] chunk = file.Chunk(EventFile.ScriptChunk)!;
+        int at = a.Editor.CodeStart + patch.Offset + 1;
+        chunk[at]--;
+        file.SetChunk(EventFile.ScriptChunk, chunk);
+        Assert.NotEmpty(SoftReset.CheckOwnWorker(before, file.ToBytes()));
     }
 
     [Fact]
@@ -89,7 +124,9 @@ public class SoftResetTests
         // A skippable scene's event has both edits; the Blitzball event has the watcher and the new tables, moved along.
         string scene = Cutscenes.EventPath("bsil0600");
         Assert.True(SoftResetFeature.HasWatcher(result.Files[scene]));
-        Assert.True(CutsceneSkipFeature.ChangedCode(original.ReadFile(scene), result.Files[scene]).Inserted.Count > 1);
+        // bsil0600 gets a worker of its own, added to the cutscene skip's edit (whose runs get renumbered with the rest).
+        byte[] build = Cutscenes.Build(original, [.. Cutscenes.All.Where(s => s.EventId == "bsil0600")], Cutscenes.Hold, SkipButtons.Default)[scene];
+        Assert.Empty(SoftReset.CheckOwnWorker(build, result.Files[scene]));
         var copy = BlitzballStats.FindCopies(original).First(c => c.Path == BlitzballStats.EventPath(BlitzballStats.ReferenceEvent));
         byte[] blitz = result.Files[copy.Path];
         Assert.True(SoftResetFeature.HasWatcher(blitz));

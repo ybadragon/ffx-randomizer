@@ -32,7 +32,9 @@ internal static class SoftResetCommands
             covered++;
             added += bytes.Length - ebp.Length;
             var tables = new ScriptTables(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!);
-            Console.WriteLine($"{id}  w{host.Worker:X2} (type {tables.WorkerType(host.Worker!.Value)}, {host.Why})  +{bytes.Length - ebp.Length} bytes");
+            string where = host.Worker is int h ? $"w{h:X2} (type {tables.WorkerType(h)}, {host.Why})"
+                : $"own new worker w{SoftReset.NewWorkerPlan(tables).Index:X2} ({SoftReset.NewWorkerPlan(tables).Patches.Count} references renumbered)";
+            Console.WriteLine($"{id}  {where}  +{bytes.Length - ebp.Length} bytes");
         }
         Console.WriteLine($"{covered} covered, {left} left out, {added / 1024.0:F0} KB added");
 
@@ -44,6 +46,7 @@ internal static class SoftResetCommands
         var result = FfxRandomizer.Core.Randomization.RandomizerEngine.Run(original, settings, new FfxRandomizer.Core.Randomization.Seed("plan"));
         Console.WriteLine($"Randomizer run (edit and checks): {clock.Elapsed.TotalSeconds:F1} s, {result.Problems.Count} problems, "
             + $"appends {result.Files.Values.Sum(f => (long)f.Length) / 1024.0 / 1024.0:F1} MB to the archive");
+        foreach (string problem in result.Problems.Take(10)) Console.WriteLine($"  {problem}");
         return 0;
     }
 }

@@ -72,9 +72,13 @@ public sealed class SoftResetFeature : IRandomizerFeature
             covered++;
             if (VbfArchive.BlocksFor((ulong)written.Length) != VbfArchive.BlocksFor((ulong)original.Length))
                 yield return $"Soft reset: {path} changed its 64 KB block count.";
-            // Checked without trusting the editor, as the cutscene skip checks its own edits: the code before survives
-            // around the added code, entries and jumps moved with their code, the data after the code moved as one block.
-            foreach (string problem in CutsceneSkipFeature.CheckEvent(before, written, Cutscenes.Original))
+            // Checked without trusting the editor. Watcher in an existing worker: as the cutscene skip checks its own edits
+            // (the code before survives around the added code, entries and jumps moved with their code, the data after
+            // the code moved as one block). Watcher in a worker of its own: see SoftReset.CheckOwnWorker.
+            bool ownWorker = new EventScriptEditor(EventFile.Read(written).Chunk(EventFile.ScriptChunk)!).WorkerCount
+                != new EventScriptEditor(EventFile.Read(before).Chunk(EventFile.ScriptChunk)!).WorkerCount;
+            var structure = ownWorker ? SoftReset.CheckOwnWorker(before, written) : CutsceneSkipFeature.CheckEvent(before, written, Cutscenes.Original);
+            foreach (string problem in structure)
                 yield return $"Soft reset: {path}: {problem}";
             if (!HasWatcher(written)) yield return $"Soft reset: {path} has no worker whose main is the watcher.";
         }

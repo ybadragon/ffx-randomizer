@@ -126,6 +126,66 @@ public sealed class EventScriptEditor
         return count;
     }
 
+    private const int WorkerHeaderLength = 0x34;
+    private const int ScenarioCountField = 0x16, MainScriptField = 0x18, ActorCountField = 0x36;
+
+    /// <summary>
+    /// Inserts a new worker at <paramref name="index"/> with the given functions (code offsets) and jump labels. Its header
+    /// shares the script's variable declarations, ref ints, ref floats and shared data (as every worker's does) and has
+    /// no private data; its tables go at the end of the chunk. Workers from <paramref name="index"/> on move up one, as
+    /// do the header's main script index and type counts; the caller renumbers references to them in the code. Only a
+    /// Scenario (type 4) worker is supported, since the header counts those.
+    /// </summary>
+    public void AddWorker(int index, int type, IReadOnlyList<int> functions, IReadOnlyList<int> jumps)
+    {
+        if (type != 4) throw new ArgumentException("Only Scenario workers can be added.", nameof(type));
+        int count = WorkerCount;
+        if (index < 0 || index > count) throw new ArgumentOutOfRangeException(nameof(index));
+        // Headers sit in order straight after the worker table; the new one goes in its place among them.
+        for (int w = 0; w < count; w++)
+            if (Worker(w) != WorkerTable + count * 4 + w * WorkerHeaderLength)
+                throw new InvalidDataException("The worker headers aren't laid out in order after the worker table.");
+        // The header first (while the table still lists only the old workers, whose pointers move past it), then the
+        // table slot, which moves every header 4 bytes on.
+        InsertRaw(WorkerTable + count * 4 + index * WorkerHeaderLength, WorkerHeaderLength, excludeFields: []);
+        InsertRaw(WorkerTable + index * 4, 4, excludeFields: []);
+        int headerAt = WorkerTable + (count + 1) * 4 + index * WorkerHeaderLength;
+        W16(_s, WorkerCountField, count + 1);
+        W32(_s, WorkerTable + index * 4, (uint)headerAt);
+
+        // Tables at the end of the chunk: function entries, then jumps.
+        int end = (int)U32(_s, EndField);
+        int tables = functions.Count * 4 + jumps.Count * 4;
+        var header = new byte[WorkerHeaderLength];
+        // Shared: variable count, ref int and ref float counts, and their tables, and the shared data. Read from the
+        // template after the inserts above moved them.
+        var w0 = _s.AsSpan(Worker(index == 0 ? 1 : 0), WorkerHeaderLength);
+        w0[0x02..0x08].CopyTo(header.AsSpan(0x02));
+        foreach (int field in new[] { 0x14, 0x18, 0x1C, 0x30 }) w0.Slice(field, 4).CopyTo(header.AsSpan(field));
+        BinaryPrimitives.WriteUInt16LittleEndian(header, (ushort)type);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x08), (ushort)functions.Count);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x0A), (ushort)jumps.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x20), (uint)end);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x24), (uint)(end + functions.Count * 4));
+        header.CopyTo(_s.AsSpan(headerAt));
+        // The new tables go before the end; the end pointer moves past them, nothing else points there.
+        InsertRaw(end, tables, excludeFields: [headerAt + 0x20, headerAt + 0x24]);
+        for (int f = 0; f < functions.Count; f++) W32(_s, end + f * 4, (uint)functions[f]);
+        for (int j = 0; j < jumps.Count; j++) W32(_s, end + functions.Count * 4 + j * 4, (uint)jumps[j]);
+
+        W16(_s, ScenarioCountField, U16(_s, ScenarioCountField) + 1);
+        W16(_s, ActorCountField, U16(_s, ActorCountField) + 1);
+        // 0xFFFF: no main script.
+        if (U16(_s, MainScriptField) is int mainScript && mainScript >= index && mainScript != 0xFFFF) W16(_s, MainScriptField, mainScript + 1);
+    }
+
+    /// <summary>Sets a 16-bit code operand (the 2 bytes after the opcode at <paramref name="offset"/>).</summary>
+    public void SetOperand(int offset, byte opcode, int operand)
+    {
+        _s[CodeStart + offset] = opcode;
+        W16(_s, CodeStart + offset + 1, operand);
+    }
+
     /// <summary>Points an existing function at different code.</summary>
     public void SetFunctionEntry(int worker, int function, int codeOffset) => W32(_s, EntrySlot(worker, function), (uint)codeOffset);
 
