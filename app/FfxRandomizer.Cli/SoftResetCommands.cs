@@ -26,6 +26,27 @@ internal static class SoftResetCommands
             foreach (var (k, v) in c) Console.WriteLine($"{v,4} {k}");
             return 0;
         }
+        if (args.FirstOrDefault() == "pointerstmp")
+        {
+            foreach (string id in args.Length > 1 ? args[1..] : SoftReset.FieldEvents(original).ToArray())
+            {
+                byte[] chunk = EventFile.Read(original.ReadFile(Cutscenes.EventPath(id))).Chunk(EventFile.ScriptChunk)!;
+                var ed = new EventScriptEditor(chunk);
+                byte[] s = ed.Chunk.ToArray();
+                int codeEnd = ed.CodeStart + ed.CodeLength, end = s.Length;
+                var known = ed.KnownPointerFields.ToHashSet();
+                var targets = known.Select(f => BitConverter.ToInt32(s, f)).Where(v => v != 0).ToHashSet();
+                var suspects = new List<string>();
+                for (int at = (codeEnd + 3) & ~3; at + 4 <= end; at += 4)
+                {
+                    int v = BitConverter.ToInt32(s, at);
+                    if (known.Contains(at) || v < codeEnd || v >= end || v % 4 != 0) continue;
+                    suspects.Add($"{at:X}->{v:X}{(targets.Contains(v) ? "*" : "")}");
+                }
+                Console.WriteLine($"{id} code end {codeEnd:X} chunk {end:X} file {original.ReadFile(Cutscenes.EventPath(id)).Length:X} suspects {suspects.Count}: {string.Join(" ", suspects.Take(12))}");
+            }
+            return 0;
+        }
         if (args.FirstOrDefault() != "plan")
         {
             Console.Error.WriteLine("Use: ffxr softreset plan");

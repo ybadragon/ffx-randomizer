@@ -260,6 +260,12 @@ public sealed class EventScriptEditor
         _edits.Add((at + count, -count));
     }
 
+    /// <summary>Chunk offsets of every u32 the editor keeps pointing at the right place when things move.</summary>
+    public IReadOnlyList<int> KnownPointerFields => [.. PointerFields()];
+
+    /// <summary>The chunk as it is now (up to its end field), for checks.</summary>
+    public ReadOnlySpan<byte> Chunk => _s;
+
     /// <summary>Chunk offsets of every u32 that holds a chunk-relative pointer.</summary>
     private IEnumerable<int> PointerFields()
     {
