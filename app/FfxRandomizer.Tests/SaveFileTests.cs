@@ -132,6 +132,53 @@ public class SaveFileTests
     }
 
     [Fact]
+    public void Test_saves_are_recorded_ordered_by_time_and_deleted_only_when_ours_and_unchanged()
+    {
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("saves"));
+        var folder = new SaveFolder(dir.File("saves"));
+        var saves = new TestSaves(folder, dir.File("test-saves.json"), isGameRunning: () => false);
+        File.WriteAllText(folder.SlotPath(3), "the player's own save");
+        File.SetLastWriteTimeUtc(folder.SlotPath(3), DateTime.UtcNow.AddMinutes(5));
+
+        saves.Write(Synthetic(), 4, "first");
+        saves.Write(Synthetic(), 5, "second");
+        Assert.Equal([4, 5], saves.Entries.Select(e => e.Slot));
+        // Each later slot is newer than everything before it, even the player's save stamped in the future.
+        Assert.True(File.GetLastWriteTimeUtc(folder.SlotPath(4)) > File.GetLastWriteTimeUtc(folder.SlotPath(3)));
+        Assert.True(File.GetLastWriteTimeUtc(folder.SlotPath(5)) > File.GetLastWriteTimeUtc(folder.SlotPath(4)));
+        Assert.Throws<IOException>(() => saves.Write(Synthetic(), 3, "over the player's save"));
+
+        Assert.Throws<InvalidOperationException>(() => saves.Delete(3));
+        Assert.True(File.Exists(folder.SlotPath(3)));
+
+        File.AppendAllText(folder.SlotPath(5), "the game saved over it");
+        Assert.Throws<InvalidOperationException>(() => saves.Delete(5));
+        Assert.True(File.Exists(folder.SlotPath(5)));
+
+        saves.Delete(4);
+        Assert.False(File.Exists(folder.SlotPath(4)));
+        Assert.Equal([5], saves.Entries.Select(e => e.Slot));
+    }
+
+    [Fact]
+    public void Test_saves_refuse_while_the_game_runs()
+    {
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("saves"));
+        var folder = new SaveFolder(dir.File("saves"));
+        var running = false;
+        var saves = new TestSaves(folder, dir.File("test-saves.json"), () => running);
+        saves.Write(Synthetic(), 4, "test");
+
+        running = true;
+        Assert.Throws<InvalidOperationException>(() => saves.Write(Synthetic(), 5, "test"));
+        Assert.Throws<InvalidOperationException>(() => saves.Delete(4));
+        Assert.False(File.Exists(folder.SlotPath(5)));
+        Assert.True(File.Exists(folder.SlotPath(4)));
+    }
+
+    [Fact]
     public void Event_locations_name_the_maps_and_areas_the_saves_use()
     {
         if (Original.Value is not { } original) return;

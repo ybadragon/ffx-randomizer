@@ -5,6 +5,9 @@ namespace FfxRandomizer.Core.Saves;
 /// <summary>
 /// One FINAL FANTASY X HD Remaster PC save (ffx_NNN): a 0x40-byte header the load menu previews, the PS2 save-data
 /// block (FFXDataParser's save-variable offsets + 0x40), then zero padding. A CRC over the block is stored twice.
+/// On load the game places the player by <see cref="SavedRoom"/> and <see cref="SavedSpawn"/>; the load menu shows the
+/// header's area, play time and gil, numbers slots by file name (ffx_000 is the autosave), lists up to 200, and shows
+/// and sorts by the file's modified time.
 /// </summary>
 public sealed class SaveFile
 {

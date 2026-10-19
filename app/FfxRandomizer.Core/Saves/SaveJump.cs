@@ -3,16 +3,19 @@ using FfxRandomizer.Core.GameData;
 namespace FfxRandomizer.Core.Saves;
 
 /// <summary>
-/// Which location fields a jump writes. The save holds the room and spawn point in more than one place, and which one
-/// the game loads from isn't known yet; these variants exist to find out in-game.
+/// Which location fields a jump writes. The save holds the room and spawn point in more than one place. Tested in-game
+/// (Kilika Woods save moved to Kilika's residential area): the game places the player by the saved room and spawn point
+/// (0xFA/0xF8) and ignores the current room and map (0x40/0x44) on load. The load menu's location name and picture come
+/// from the area field (header 0x18, body 0x4E). C sets all of them consistently and is the default; the others remain
+/// for diagnosing other saves.
 /// </summary>
 public enum JumpVariant
 {
-    /// <summary>Only the current room and map (0x40/0x44) and their mirror at 0x100.</summary>
+    /// <summary>Only the current room and map (0x40/0x44) and their mirror at 0x100. Loads in the template's old room.</summary>
     A,
-    /// <summary>Only the saved room and spawn point (0xFA/0xF8).</summary>
+    /// <summary>Only the saved room and spawn point (0xFA/0xF8). Loads in the new room, but the menu shows the old location.</summary>
     B,
-    /// <summary>Every room, map and spawn field, with the old room recorded as the last room.</summary>
+    /// <summary>Every room, map, spawn and area field, with the old room recorded as the last room. Loads in the new room.</summary>
     C,
     /// <summary>As C, plus the leader's position set to the entrance's.</summary>
     D,
