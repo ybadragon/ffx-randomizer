@@ -31,7 +31,8 @@ internal static class SoftResetCommands
             }
             covered++;
             added += bytes.Length - ebp.Length;
-            Console.WriteLine($"{id}  w{host.Worker:X2}  +{bytes.Length - ebp.Length} bytes");
+            var tables = new ScriptTables(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!);
+            Console.WriteLine($"{id}  w{host.Worker:X2} (type {tables.WorkerType(host.Worker!.Value)}, {host.Why})  +{bytes.Length - ebp.Length} bytes");
         }
         Console.WriteLine($"{covered} covered, {left} left out, {added / 1024.0:F0} KB added");
 

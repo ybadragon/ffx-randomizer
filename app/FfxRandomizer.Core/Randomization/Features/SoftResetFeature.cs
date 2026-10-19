@@ -81,13 +81,15 @@ public sealed class SoftResetFeature : IRandomizerFeature
         if (covered == 0) yield return "Soft reset: no field event has the watcher.";
     }
 
-    /// <summary>Some worker's main starts at the watcher code, looping through that worker's label at its start.</summary>
+    /// <summary>Some worker's main (not a subroutine's) starts at the watcher code, looping through that worker's label at its start.</summary>
     public static bool HasWatcher(byte[] ebp)
     {
-        var script = new EventScriptEditor(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!);
+        var tables = new ScriptTables(EventFile.Read(ebp).Chunk(EventFile.ScriptChunk)!);
+        var script = tables.Editor;
         for (int w = 0; w < script.WorkerCount; w++)
         {
-            if (script.FunctionCount(w) < 2 || script.JumpCount(w) == 0) continue;
+            // A subroutine's f01 isn't a main the engine starts.
+            if (tables.WorkerType(w) == 0 || script.FunctionCount(w) < 2 || script.JumpCount(w) == 0) continue;
             int entry = script.FunctionEntry(w, 1), loop = script.JumpCount(w) - 1;
             byte[] code = SoftReset.WatcherCode(loop);
             if (script.JumpTarget(w, loop) == entry && entry + code.Length <= script.CodeLength && script.Code(entry, code.Length).SequenceEqual(code))

@@ -21,7 +21,7 @@ public static partial class SoftReset
 
     public const int PollFrames = 2, HoldFrames = 60, FadeFrames = 15, TitleRoom = 23, TitleSpawn = 0;
     public const int SetRoomFadeoutTime = 0x00BB, SetRoomFadeoutMode = 0x00BC, TransitionToRoom = 0x0011, FadeBlack = 0;
-    private const int Halt = 0x005F, MainFunction = 1;
+    private const int Halt = 0x005F, SetWorkerAsPlayer = 0x0043, MainFunction = 1;
 
     /// <summary>Calls that take a worker and could hang on, or switch off, a worker that never goes idle: waitForWorker, deactivate, activate.</summary>
     private static readonly HashSet<int> WorkerCalls = [0x00F6, 0x00A7, 0x00A8];
@@ -42,7 +42,7 @@ public static partial class SoftReset
     /// The worker to host the watcher in an event script, or null and why not. <paramref name="busy"/> are workers the
     /// cutscene skip uses there.
     /// </summary>
-    public static (int? Worker, string? Reason) HostFor(byte[] scriptChunk, IReadOnlySet<int> busy)
+    public static (int? Worker, string Why) HostFor(byte[] scriptChunk, IReadOnlySet<int> busy)
     {
         var tables = new ScriptTables(scriptChunk);
         var editor = tables.Editor;
@@ -72,8 +72,12 @@ public static partial class SoftReset
                 if (!AtelCode.IsReturn(code[editor.FunctionEntry(w, f)])) return false;
             return true;
         }
-        var candidates = Enumerable.Range(0, editor.WorkerCount).Where(w => !busy.Contains(w) && Halts(w) && !Named(w)).ToList();
-        if (candidates.Count == 0) return (null, "no worker whose main only halts");
+        // Not a subroutine (its f01 isn't a main the engine starts) and not the player (a busy main could hold up control).
+        var players = statements.Where(s => s.Instructions.Any(i => i.Op == AtelCode.CallPopA && i.Operand == SetWorkerAsPlayer))
+            .Select(s => tables.FunctionAt(s.Offset)?.Worker ?? -1).ToHashSet();
+        var candidates = Enumerable.Range(0, editor.WorkerCount)
+            .Where(w => !busy.Contains(w) && tables.WorkerType(w) != 0 && !players.Contains(w) && Halts(w) && !Named(w)).ToList();
+        if (candidates.Count == 0) return (null, "no worker (other than the player or a subroutine) whose main only halts");
         // Best: nothing uses the worker at all. Next: only the engine does (it signals talk/cross/touch at levels above
         // main, as the scripts' own runs are: none of them uses level 0). Never one a script runs or names, which could
         // wait for the worker to finish.
@@ -83,10 +87,10 @@ public static partial class SoftReset
         {
             // A run with a computed worker could reach any of them; prefer ones with no functions past main.
             var bare = idle.Where(w => editor.FunctionCount(w) == MainFunction + 1).ToList();
-            if (bare.Count > 0) return (bare[0], null);
+            if (bare.Count > 0) return (bare[0], "idle (no functions past main)");
         }
-        if (idle.Count > 0) return (idle[0], null);
-        if (engineOnly.Count > 0) return (engineOnly[0], null);
+        if (idle.Count > 0) return (idle[0], "idle");
+        if (engineOnly.Count > 0) return (engineOnly[0], "the engine signals it (talk/scout/cross/touch)");
         return (null, "every worker whose main only halts is run by the event's scripts");
 
         // Named, or possibly named (a computed worker), by a call that waits for, stops or starts a worker.
@@ -114,7 +118,9 @@ public static partial class SoftReset
         code.AddRange(Atel.Call(SetRoomFadeoutTime, FadeFrames));
         code.AddRange(Atel.Call(SetRoomFadeoutMode, FadeBlack));
         code.AddRange(Atel.Call(TransitionToRoom, TitleRoom, TitleSpawn));
-        code.AddRange(Atel.Goto(loopJump));
+        // Then stop, as the game-over screen does after its own transition, so a held combo can't start it again.
+        code.AddRange(Atel.Call(Halt));
+        code.Add(Atel.Return);
         return [.. code];
     }
 
