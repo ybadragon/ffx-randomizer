@@ -89,6 +89,47 @@ public sealed class FfxCharset
         return Clean(text);
     }
 
+    /// <summary>
+    /// Encodes plain text (the inverse of <see cref="Decode"/> for visible characters, no terminator). A character the
+    /// font lacks falls back to its fullwidth form (the Japanese, Chinese and Korean fonts have fullwidth Latin only);
+    /// one with neither throws, so missing glyphs are caught when the text is written rather than shown as blanks.
+    /// </summary>
+    public byte[] Encode(string text)
+    {
+        var bytes = new List<byte>();
+        foreach (char c in text)
+        {
+            int index = _glyphs.IndexOf(c);
+            if (index < 0 && Fullwidth(c) is { } wide) index = _glyphs.IndexOf(wide);
+            if (index < 0) throw new ArgumentException($"The game font has no glyph for '{c}'.", nameof(text));
+            int code = index + FirstCode;
+            if (code >= ExtendedShift + FirstCode)
+            {
+                bytes.Add(ExtendedPrefix);
+                code -= ExtendedShift;
+            }
+            int section = (code - FirstCode) / SectionSize;
+            if (section == 0) bytes.Add((byte)code);
+            else
+            {
+                bytes.Add((byte)(SectionStart + section));
+                bytes.Add((byte)(code - section * SectionSize));
+            }
+        }
+        return [.. bytes];
+    }
+
+    /// <summary>Whether every character of <paramref name="text"/> can be encoded.</summary>
+    public bool CanEncode(string text) =>
+        text.All(c => _glyphs.Contains(c) || (Fullwidth(c) is { } wide && _glyphs.Contains(wide)));
+
+    private static char? Fullwidth(char c) => c switch
+    {
+        ' ' => '　',
+        >= '!' and <= '~' => (char)(c - '!' + '！'),
+        _ => null,
+    };
+
     /// <summary>Control bytes that stand alone; every other byte below 0x30 is followed by one argument byte.</summary>
     private static bool TakesArgument(int controlByte) =>
         controlByte is not (0x01 or 0x02 or 0x03 or 0x04 or 0x05 or 0x0C or 0x0F or 0x11);

@@ -38,7 +38,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Aeons | Base stats, stat growth, power-up items |
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
-| Story (experimental) | Skip cutscenes: hold Select (Back/View on a controller) as a scene starts, or always skip. Covers only the opening Zanarkand Ruins campfire scene so far |
+| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers only the opening Zanarkand Ruins campfire scene so far |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.

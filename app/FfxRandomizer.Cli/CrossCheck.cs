@@ -76,11 +76,16 @@ internal static partial class CrossCheck
                     if (blitz.Path.EndsWith("/bltz0002.ebp")) ebp[blitz.Offsets[BlitzStat.CA] + 30 * BlitzGrowth.Size] ^= 1;
                     if (blitz.Path.EndsWith("/luca0400.ebp")) ebp[blitz.Offsets[BlitzStat.HP] + 2 * BlitzGrowth.Size] ^= 1;
                 }
-                // Cutscenes: the GameMoment threshold in the first skip check (AE0200 -> AE0300).
-                if (CutsceneSkipFeature.Mode(result.Settings) != CutsceneSkipFeature.Original)
+                // Cutscenes: the GameMoment threshold in the first-visit guard (AE0200 -> AE0300).
+                string cutscenePath = Cutscenes.EventPath(Cutscenes.All[0].EventId);
+                if (copy.TryGetValue(cutscenePath, out byte[]? eventBytes))
                 {
-                    var patch = CutsceneSkipFeature.PatchFor(Cutscenes.All[0], CutsceneSkipFeature.Mode(result.Settings));
-                    if (copy.TryGetValue(patch.Path, out byte[]? ebp)) ebp[new EventScript(ebp).CodeStart + patch.CodeOffset + 4] ^= 1;
+                    byte[] guard = Cutscenes.Guard(Cutscenes.All[0]);
+                    int codeStart = 0x40 + (int)BitConverter.ToUInt32(eventBytes, 0x40 + 0x30);
+                    int at = CutsceneSkipFeature.InsertedCode(original.ReadFile(cutscenePath), eventBytes)
+                        .Select(r => eventBytes.AsSpan(codeStart + r.Offset, r.Length).IndexOf(guard) is int i and >= 0 ? codeStart + r.Offset + i : -1)
+                        .First(i => i >= 0);
+                    eventBytes[at + 4] ^= 1;
                 }
                 files = copy;
             }
@@ -173,7 +178,7 @@ internal static partial class CrossCheck
             }
             if (result.Spoiler[CutsceneSkipFeature.Section] is JsonArray scenes)
             {
-                problems.AddRange(CompareCutscenes(result.Settings, files));
+                problems.AddRange(CompareCutscenes(original, result.Settings, files));
                 checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
             Console.WriteLine(problems.Count == 0

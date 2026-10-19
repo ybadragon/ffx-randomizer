@@ -22,6 +22,13 @@ public sealed class RandomizerSettings
     public string ChoiceOf(OptionGroup group) =>
         Choices.TryGetValue(group.Id, out string? id) && group.Choices.Any(c => c.Id == id) ? id : group.Choices[0].Id;
 
+    public string ChoiceOf(OptionDropdown dropdown) =>
+        Choices.TryGetValue(dropdown.Id, out string? id) && dropdown.Choices.Any(c => c.Id == id) ? id : dropdown.Choices[0].Id;
+
+    /// <summary>Whether a box's dropdown applies: the box is in use with one of the choices the dropdown belongs to.</summary>
+    public bool DropdownApplies(OptionGroup group) =>
+        group.Dropdown is { } d && IsActive(group) && (group.Choices.Count == 0 || d.ShownFor.Contains(ChoiceOf(group)));
+
     /// <summary>Whether a feature box changes anything: switched on, or a choice other than its first.</summary>
     public bool IsActive(OptionGroup group) =>
         group.HasToggle ? IsOn(group.Id) : group.Choices.Count > 0 && ChoiceOf(group) != group.Choices[0].Id;
@@ -42,6 +49,7 @@ public sealed class RandomizerSettings
         {
             if (group.HasToggle) yield return $"{group.Id}={IsOn(group.Id)}";
             if (group.Choices.Count > 0) yield return $"{group.Id}={ChoiceOf(group)}";
+            if (group.Dropdown is { } d) yield return $"{d.Id}={ChoiceOf(d)}";
             foreach (var sub in group.SubOptions) yield return $"{sub.Id}={IsOn(sub.Id)}";
         }
     }

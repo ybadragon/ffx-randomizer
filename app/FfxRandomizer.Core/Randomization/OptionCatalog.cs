@@ -1,3 +1,6 @@
+using FfxRandomizer.Core.GameData;
+using FfxRandomizer.Core.GameData.Events;
+
 namespace FfxRandomizer.Core.Randomization;
 
 public sealed record Choice(string Id, string Label);
@@ -17,7 +20,23 @@ public sealed record OptionGroup(
     IReadOnlyList<SubOption> SubOptions,
     string? Warning = null,
     string? Badge = null,
-    bool Implemented = false);
+    bool Implemented = false)
+{
+    public OptionDropdown? Dropdown { get; init; }
+}
+
+/// <summary>
+/// A second setting on a feature box, picked from a list: stored under its own id in <see cref="RandomizerSettings.Choices"/>,
+/// shown only while the box's choice is one of <see cref="ShownFor"/>. The first choice is the default. Picking a choice
+/// listed in <see cref="Warnings"/> shows that warning.
+/// </summary>
+public sealed record OptionDropdown(
+    string Id,
+    string Label,
+    IReadOnlyList<Choice> Choices,
+    IReadOnlySet<string> ShownFor,
+    string? Hint = null,
+    IReadOnlyDictionary<string, string>? Warnings = null);
 
 public sealed record OptionTab(string Id, string Label, string Blurb, IReadOnlyList<OptionGroup> Groups);
 
@@ -134,11 +153,20 @@ public static class OptionCatalog
         new("story", "Story", "How the story plays out.",
         [
             Pick("cutscenes", "Skip cutscenes",
-                "Covers one scene so far: the Zanarkand Ruins campfire that opens the game. Hold Select (Back/View on a controller) while the scene loads to skip straight to Zanarkand, or skip it every time. The late-game return to the campfire still plays.",
-                "Experimental: checked by tools, not yet played through. If a skip ever leaves you stuck, use Restore original.",
-                new("orig", "Original"), new("hold", "Hold Select to skip"), new("always", "Always skip"),
-                new("anybutton", "Hold any button to skip (diagnostic)"), new("press", "Press Select during the scene (diagnostic)"))
-                with { Implemented = true, Badge = "Experimental" },
+                "Covers one scene so far: the Zanarkand Ruins campfire that opens the game. With Hold button to skip (recommended), a prompt fills while you hold the skip button during the scene; after about a second the scene ends and the story moves on. The late-game return to the campfire isn't skipped.",
+                "Experimental: only the opening scene has been played through. If a skip ever leaves you stuck, use Restore original.",
+                new(Cutscenes.Original, "Original"), new(Cutscenes.Hold, "Hold button to skip"), new(Cutscenes.Always, "Always skip"))
+                with
+                {
+                    Implemented = true,
+                    Badge = "Experimental",
+                    Dropdown = new OptionDropdown("cutscenebutton", "Skip button",
+                        [.. SkipButtons.All.Select(b => new Choice(b.Id, b.Label))],
+                        ShownFor: new HashSet<string> { Cutscenes.Hold },
+                        Hint: "Xbox buttons in brackets. Use Record to press the button on your controller instead. Keyboard keys can't be recorded, since the game lets you rebind them.",
+                        Warnings: SkipButtons.All.Where(b => b.AdvancesDialogue).ToDictionary(b => b.Id,
+                            b => $"{b.Label} also advances dialogue, so holding it may skip lines before the scene skips.")),
+                },
         ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
         [
