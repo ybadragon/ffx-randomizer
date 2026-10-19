@@ -7,7 +7,7 @@ namespace FfxRandomizer.Core.Randomization.Features;
 public sealed class CutsceneSkipFeature : IRandomizerFeature
 {
     public const string Section = "cutscenes";
-    public const string Original = "orig", HoldSelect = "hold", Always = "always", HoldAnyButton = "anybutton";
+    public const string Original = "orig", HoldSelect = "hold", Always = "always", HoldAnyButton = "anybutton", PressSelect = "press";
 
     public bool IsEnabled(RandomizerSettings s) => Mode(s) != Original;
 
@@ -17,6 +17,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         Always => scene.Always,
         HoldAnyButton => scene.HoldAnyButton,
+        PressSelect => scene.PressSelect ?? scene.HoldSelect,
         _ => scene.HoldSelect,
     };
 
@@ -32,7 +33,13 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 Scene = scene.Name,
                 scene.Area,
                 Event = patch.EventId,
-                Skip = mode switch { Always => "always", HoldAnyButton => "hold any button as it starts", _ => "hold Select as it starts" },
+                Skip = mode switch
+                {
+                    Always => "always",
+                    HoldAnyButton => "hold any button as it starts",
+                    PressSelect => "press Select during the scene",
+                    _ => "hold Select as it starts",
+                },
             });
         }
     }

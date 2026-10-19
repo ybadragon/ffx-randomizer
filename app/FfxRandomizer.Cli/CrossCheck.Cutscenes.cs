@@ -41,7 +41,8 @@ internal static partial class CrossCheck
             if (mode == CutsceneSkipFeature.HoldAnyButton && !check.Contains("HeldButtonsBitfield [0046h] &", StringComparison.Ordinal))
                 yield return $"{patch.EventId}: the any-button check isn't there; FFXDataParser reads \"{check.Trim()}\"";
             string next = $"{patch.CodeOffset + patch.Bytes.Length:X4} ";
-            if (!lines.Any(l => l.StartsWith(next, StringComparison.Ordinal) && l.Contains("Map.setGfxVisibility", StringComparison.Ordinal)))
+            string firstInstruction = Convert.ToHexString(patch.Expected);
+            if (!lines.Any(l => l.StartsWith(next, StringComparison.Ordinal) && l.Replace(" ", "").Contains(firstInstruction, StringComparison.Ordinal)))
                 yield return $"{patch.EventId}: the scene's original first instruction isn't at {patch.CodeOffset + patch.Bytes.Length:X4}";
             if (!lines.Any(l => l.StartsWith($"{exit.CodeOffset + patch.Bytes.Length:X4} j{exit.Jump:X2}:", StringComparison.Ordinal)))
                 yield return $"{patch.EventId}: label j{exit.Jump:X2} isn't at {exit.CodeOffset + patch.Bytes.Length:X4}";

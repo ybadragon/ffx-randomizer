@@ -82,6 +82,7 @@ public class CutsceneTests
     [InlineData("hold")]
     [InlineData("always")]
     [InlineData("anybutton")]
+    [InlineData("press")]
     public void Every_mode_inserts_the_check_and_passes_every_check(string mode)
     {
         if (Original.Value is not { } original) return;
@@ -97,9 +98,10 @@ public class CutsceneTests
         var script = new EventScript(after);
         Assert.Equal(patch.Bytes, script.Code(patch.CodeOffset, patch.Bytes.Length).ToArray());
         Assert.Equal(patch.Expected, script.Code(patch.CodeOffset + patch.Bytes.Length, patch.Expected.Length).ToArray());
-        Assert.Equal(patch.CodeOffset, script.FunctionEntry(0x0D, 2));
+        // Hold/always check at the start of the scene (w0D::f02); press at the start of the game's own skip handler (f03).
+        Assert.Equal(patch.CodeOffset, script.FunctionEntry(0x0D, mode == "press" ? 3 : 2));
         Assert.Equal(0x4426 + patch.Bytes.Length, script.JumpTarget(0x0D, 0x13));
-        Assert.Equal(mode != "always", patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xB5, 0x46, 0x00]) >= 0);
+        Assert.Equal(mode is "hold" or "anybutton", patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xB5, 0x46, 0x00]) >= 0);
         if (mode == "anybutton") Assert.True(patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xAE, 0xFF, 0xFF, 0x05]) >= 0);
     }
 

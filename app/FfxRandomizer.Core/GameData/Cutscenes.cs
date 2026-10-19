@@ -4,7 +4,7 @@ namespace FfxRandomizer.Core.GameData;
 /// A cutscene that can be skipped: the function that plays it and the label its skip jumps to. Both edits insert a short
 /// check at the start of the function, so with the check false the scene plays exactly as before.
 /// </summary>
-public sealed record SkippableScene(string Name, string Area, EventPatch Always, EventPatch HoldSelect, EventPatch HoldAnyButton);
+public sealed record SkippableScene(string Name, string Area, EventPatch Always, EventPatch HoldSelect, EventPatch HoldAnyButton, EventPatch? PressSelect = null);
 
 /// <summary>
 /// The scenes "Skip cutscenes" covers. The idea of jumping from a scene's start straight to its exit comes from CSR2,
@@ -50,6 +50,14 @@ public static class Cutscenes
         // first visit is skipped; the late-game scene still plays.
         Scene("Zanarkand Ruins campfire (opening)", "Zanarkand", "znkd0600", 0x3DC4,
             expected: [0xAE, 0x01, 0x00, 0xAE, 0x01, 0x00, 0xD8, 0x0D, 0x80], // call Map.setGfxVisibility(1, true)
-            moment: 2, exit: new EventJump(Worker: 0x0D, Jump: 0x13, CodeOffset: 0x4426)),
+            moment: 2, exit: new EventJump(Worker: 0x0D, Jump: 0x13, CodeOffset: 0x4426)) with
+        {
+            // The game already watches for Select here: w13::f02 polls controllerButtonPressed2(Select) every frame and on a
+            // press runs w0D::f03 at level 2, which preempts the scene, fades out and jumps to its later part (j0A). Our
+            // check at the start of f03 sends a first-visit press to the full exit instead.
+            PressSelect = new EventPatch("znkd0600", 0x437D,
+                [0xAE, 0x1E, 0x00, 0xD8, 0x05, 0x40], // call SgEvent.fadeoutToBlack(30)
+                SkipWhileBefore(2, 0x13), EventPatchKind.InsertBefore, [new EventJump(0x0D, 0x13, 0x4426)]),
+        },
     ];
 }

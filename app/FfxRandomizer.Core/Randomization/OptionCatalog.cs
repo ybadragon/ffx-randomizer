@@ -137,7 +137,7 @@ public static class OptionCatalog
                 "Covers one scene so far: the Zanarkand Ruins campfire that opens the game. Hold Select (Back/View on a controller) while the scene loads to skip straight to Zanarkand, or skip it every time. The late-game return to the campfire still plays.",
                 "Experimental: checked by tools, not yet played through. If a skip ever leaves you stuck, use Restore original.",
                 new("orig", "Original"), new("hold", "Hold Select to skip"), new("always", "Always skip"),
-                new("anybutton", "Hold any button to skip (diagnostic)"))
+                new("anybutton", "Hold any button to skip (diagnostic)"), new("press", "Press Select during the scene (diagnostic)"))
                 with { Implemented = true, Badge = "Experimental" },
         ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
