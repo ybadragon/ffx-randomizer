@@ -89,6 +89,15 @@ public sealed class EventScriptEditor
         return at;
     }
 
+    /// <summary>Replaces code in place with the same number of bytes, after checking it is <paramref name="expected"/>.</summary>
+    public void OverwriteCode(int offset, ReadOnlySpan<byte> expected, ReadOnlySpan<byte> code)
+    {
+        if (code.Length != expected.Length) throw new ArgumentException("An overwrite must keep the code the same length.", nameof(code));
+        if (offset < 0 || offset + expected.Length > CodeLength || !Code(offset, expected.Length).SequenceEqual(expected))
+            throw new InvalidDataException($"The code at {offset:X4} isn't {Convert.ToHexString(expected)}.");
+        code.CopyTo(_s.AsSpan(CodeStart + offset));
+    }
+
     /// <summary>Appends code at the end of the code and returns its code offset.</summary>
     public int AppendCode(ReadOnlySpan<byte> code) => InsertCode(CodeLength, code);
 

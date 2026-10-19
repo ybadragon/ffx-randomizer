@@ -53,7 +53,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 if (!written.AsSpan().SequenceEqual(bytes))
                     yield return $"{scene.Name}: {path} isn't what the edit produces (another feature changed it?).";
                 bool isEvent = path.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase);
-                var problems = isEvent ? CheckEvent(original, written, mode) : CheckText(original, written, Cutscenes.Steps + 1);
+                var problems = isEvent ? CheckEvent(original, written, mode) : CheckText(original, written, Cutscenes.PromptCount);
                 foreach (string problem in problems) yield return $"{scene.Name}: {path}: {problem}";
             }
         }
@@ -78,7 +78,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
             if (i is EventFile.ScriptChunk) continue;
             if (i is EventFile.JapaneseTextChunk or EventFile.EnglishTextChunk && mode == Cutscenes.Hold && before.Chunk(i) is { } text)
             {
-                foreach (string p in CheckText(text, after.Chunk(i)!, Cutscenes.Steps + 1)) yield return $"text chunk {i}: {p}";
+                foreach (string p in CheckText(text, after.Chunk(i)!, Cutscenes.PromptCount)) yield return $"text chunk {i}: {p}";
                 continue;
             }
             if (!(before.Chunk(i) ?? []).AsSpan().SequenceEqual(after.Chunk(i) ?? []))
@@ -98,13 +98,18 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         }
 
         // Inserted code: walk both codes in step; where they differ, the patched side must hold an inserted block and
-        // then continue with exactly the original bytes. Record each insertion as (original offset, length).
-        var inserts = Alignment(b.Code(0, b.CodeLength).ToArray(), a.Code(0, a.CodeLength).ToArray(), out string? codeProblem);
+        // then continue with exactly the original bytes, or the original instruction must be replaced by NOPs.
+        byte[] originalCode = b.Code(0, b.CodeLength).ToArray();
+        var inserts = Alignment(originalCode, a.Code(0, a.CodeLength).ToArray(), out var nops, out string? codeProblem);
         if (codeProblem is not null)
         {
             yield return codeProblem;
             yield break;
         }
+        // The only instruction an edit may blank out is a worker start ("run wXX::fYY at level N", which the watcher replaces).
+        foreach (var (at, length) in nops)
+            if (length != 11 || originalCode[at] != 0xAE || originalCode[at + 9] != 0x36 || originalCode[at + 10] != 0x25)
+                yield return $"original code at {at:X4} ({Convert.ToHexString(originalCode, at, length)}) was blanked out, but it isn't a worker start.";
         int MapCode(int offset) => offset + inserts.Where(i => i.At < offset).Sum(i => i.Length);
 
         for (int w = 0; w < b.WorkerCount; w++)
@@ -156,22 +161,41 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         bool InInserted(int offset) => inserts.Any(i => offset >= MapCode(i.At) && offset < MapCode(i.At) + i.Length);
     }
 
-    /// <summary>The code inserted into an event, as (code offset, length) ranges in the edited event's code.</summary>
-    public static IReadOnlyList<(int Offset, int Length)> InsertedCode(byte[] originalEbp, byte[] patchedEbp)
+    /// <summary>
+    /// What an edit did to an event's code. <see cref="Inserted"/>: inserted blocks as (code offset, length) in the edited
+    /// code. <see cref="Nopped"/>: original instructions replaced by NOPs (0x00) of the same length, as (offset in the
+    /// original code, offset in the edited code, length).
+    /// </summary>
+    public sealed record CodeChanges(IReadOnlyList<(int Offset, int Length)> Inserted, IReadOnlyList<(int Original, int Offset, int Length)> Nopped);
+
+    public static CodeChanges ChangedCode(byte[] originalEbp, byte[] patchedEbp)
     {
         var b = new EventScriptEditor(EventFile.Read(originalEbp).Chunk(EventFile.ScriptChunk)!);
         var a = new EventScriptEditor(EventFile.Read(patchedEbp).Chunk(EventFile.ScriptChunk)!);
-        var inserts = Alignment(b.Code(0, b.CodeLength).ToArray(), a.Code(0, a.CodeLength).ToArray(), out string? problem);
+        var inserts = Alignment(b.Code(0, b.CodeLength).ToArray(), a.Code(0, a.CodeLength).ToArray(), out var nops, out string? problem);
         if (problem is not null) throw new InvalidDataException(problem);
-        return inserts.Select(i => (i.At + inserts.Where(o => o.At < i.At).Sum(o => o.Length), i.Length)).ToList();
+        int Map(int at) => at + inserts.Where(o => o.At < at).Sum(o => o.Length);
+        return new CodeChanges(
+            inserts.Select(i => (Map(i.At), i.Length)).ToList(),
+            nops.Select(n => (n.At, Map(n.At), n.Length)).ToList());
     }
 
-    /// <summary>Finds blocks inserted into <paramref name="before"/> to make <paramref name="after"/>, greedily.</summary>
-    private static List<(int At, int Length)> Alignment(byte[] before, byte[] after, out string? problem)
+    /// <summary>
+    /// Walks the original and edited code together and explains every difference, greedily, as either original code
+    /// replaced by NOPs of the same length or a block inserted before the original continues (checked over 32 bytes).
+    /// When the inserted block could sit at several places (it starts with the same instruction the original continues
+    /// with, as the watcher start at a scene's entry does), it is placed at the earliest instruction boundary.
+    /// </summary>
+    private static List<(int At, int Length)> Alignment(byte[] before, byte[] after, out List<(int At, int Length)> nops, out string? problem)
     {
         problem = null;
+        nops = [];
         var inserts = new List<(int At, int Length)>();
-        int i = 0, j = 0;
+        // Opcodes from 0x80 up take a 16-bit operand.
+        var boundary = new bool[before.Length + 1];
+        for (int at = 0; at < before.Length; at += before[at] >= 0x80 ? 3 : 1) boundary[at] = true;
+        boundary[before.Length] = true;
+        int i = 0, j = 0, floor = 0;
         while (i < before.Length)
         {
             if (j < after.Length && before[i] == after[j])
@@ -180,20 +204,43 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 j++;
                 continue;
             }
-            // Smallest insertion after which the rest of the original resumes (checked over the next 32 bytes).
+            int k = Math.Min(32, before.Length - i);
+            int zeros = 0;
+            while (j + zeros < after.Length && after[j + zeros] == 0) zeros++;
+            int nopped = -1;
+            for (int len = 1; len <= zeros && i + len <= before.Length; len++)
+            {
+                int rest = Math.Min(32, before.Length - i - len);
+                if (j + len + rest <= after.Length && after.AsSpan(j + len, rest).SequenceEqual(before.AsSpan(i + len, rest))) { nopped = len; break; }
+            }
+            if (nopped > 0)
+            {
+                nops.Add((i, nopped));
+                i += nopped;
+                j += nopped;
+                floor = i;
+                continue;
+            }
             int found = -1;
             for (int len = 1; j + len <= after.Length && len <= 4096; len++)
-            {
-                int k = Math.Min(32, before.Length - i);
                 if (j + len + k <= after.Length && after.AsSpan(j + len, k).SequenceEqual(before.AsSpan(i, k))) { found = len; break; }
-            }
             if (found < 0)
             {
                 problem = $"original code at {i:X4} doesn't continue anywhere in the patched code.";
                 return inserts;
             }
+            // Slide the block back over original bytes it ends with, keeping the earliest boundary it can start at.
+            var (bestI, bestJ) = (i, j);
+            for (int si = i, sj = j; si > floor && after[sj - 1 + found] == before[si - 1]; )
+            {
+                si--;
+                sj--;
+                if (boundary[si]) (bestI, bestJ) = (si, sj);
+            }
+            (i, j) = (bestI, bestJ);
             inserts.Add((i, found));
             j += found;
+            floor = i + 1;
         }
         if (j < after.Length) inserts.Add((before.Length, after.Length - j));
         return inserts;

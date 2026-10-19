@@ -12,12 +12,13 @@ public sealed record EventJump(int Worker, int Jump, int CodeOffset);
 
 /// <summary>
 /// The game's own skip watcher for a scene, when it has one: <see cref="Worker"/>'s <see cref="WatchFunction"/> is
-/// started alongside the scene and polls a button; on a press it runs the scene worker's <see cref="SkipFunction"/> at
-/// level 2, which preempts the scene. <see cref="StopFunction"/> (a bare direct return) is run at level 2 to end the
-/// watcher when the scene finishes. The skip watcher reuses all three, so the scene never has two watchers.
+/// started by the scene at <see cref="Start"/> and polls a button; on a press it runs the scene worker's
+/// <see cref="SkipFunction"/> at level 2, which preempts the scene. <see cref="StopFunction"/> (a bare direct return) is
+/// run at level 2 to end the watcher when the scene finishes. The skip watcher reuses all three, starting it at the
+/// scene's first instruction instead (the call at <see cref="Start"/> becomes no-ops), so the scene never has two.
 /// </summary>
 public sealed record BuiltInWatcher(
-    int Worker, int WatchFunction, int StopFunction, SceneCode StopStart, int SkipFunction, SceneCode SkipStart, byte[] BeforeSkip);
+    int Worker, int WatchFunction, SceneCode Start, int StopFunction, SceneCode StopStart, int SkipFunction, SceneCode SkipStart, byte[] BeforeSkip);
 
 /// <summary>
 /// A cutscene that can be skipped. <see cref="SceneStart"/> is the scene function's first instruction; <see cref="Exit"/>
@@ -44,6 +45,12 @@ public static class Cutscenes
     /// </summary>
     public const int HoldFrames = 60, PollFrames = 2, Steps = 5;
 
+    /// <summary>When the watcher starts it shows "Hold [button] to skip" this long, checking the button this often.</summary>
+    public const int IntroFrames = 180, IntroPollFrames = 6;
+
+    /// <summary>Strings each scene's text gains: the intro prompt and one per bar step (empty to full).</summary>
+    public const int PromptCount = Steps + 2;
+
     // Where the prompt sits: top left, clear of the scene's own text (which uses window 0, low on the screen).
     private const int PromptX = 16, PromptY = 16;
 
@@ -61,7 +68,9 @@ public static class Cutscenes
             Exit: new(Worker: 0x0D, Jump: 0x13, CodeOffset: 0x4426),
             MomentBelow: 2,
             MessageWindow: 3, // the event only uses window 0
-            BuiltIn: new(Worker: 0x13, WatchFunction: 2, StopFunction: 3,
+            BuiltIn: new(Worker: 0x13, WatchFunction: 2,
+                Start: new(0x3EBA, Atel.Run(1, 0x13, 2, awaitEnd: false)), // after the title card, about 5 s in
+                StopFunction: 3,
                 StopStart: new(0x4C12, [Atel.DirectReturn]),
                 SkipFunction: 3,
                 SkipStart: new(0x437D, [0xAE, 0x1E, 0x00, 0xD8, 0x05, 0x40]), // SgEvent.fadeoutToBlack(30)
@@ -107,7 +116,7 @@ public static class Cutscenes
     private static void Check(EventScriptEditor script, SkippableScene scene)
     {
         var checks = new List<SceneCode> { scene.SceneStart };
-        if (scene.BuiltIn is { } b) checks.AddRange([b.StopStart, b.SkipStart]);
+        if (scene.BuiltIn is { } b) checks.AddRange([b.Start, b.StopStart, b.SkipStart]);
         foreach (var code in checks)
             if (code.Offset + code.Expected.Length > script.CodeLength || !script.Code(code.Offset, code.Expected.Length).SequenceEqual(code.Expected))
                 throw new EventMismatchException(scene, $"the code at {code.Offset:X4} isn't {Convert.ToHexString(code.Expected)}");
@@ -120,44 +129,64 @@ public static class Cutscenes
         }
     }
 
+    /// <summary>Jump labels the watcher uses, as indexes into its host worker's jump table.</summary>
+    internal sealed record WatcherLabels(int Loop, int Held, int Cancel, int Idle);
+
     /// <summary>
-    /// The watcher, in the shape the game's own button prompts use (the S.S. Winno Jecht Shot tutorial): open the prompt
-    /// once, then poll the button with short waits.
+    /// The watcher, in the shape the game's own button prompts use (the S.S. Winno Jecht Shot tutorial): show a box, then
+    /// poll the button with short waits.
     /// <list type="bullet">
+    /// <item>Intro: as soon as it starts, show "Hold [button] to skip" for <see cref="IntroFrames"/> frames, checking the
+    /// button every <see cref="IntroPollFrames"/>; holding it goes straight to the bar (the open box is redrawn), otherwise
+    /// the box closes and the watcher idles.</item>
     /// <item>Idle: if the skip button isn't down, wait a frame and look again.</item>
-    /// <item>Held: show the prompt (<see cref="ShowPrompt"/>), then check the button every <see cref="PollFrames"/>
-    /// frames, redrawing the prompt with the next bar step at even intervals so it is full one step before the end.
-    /// Letting go closes the prompt, waits for it to go, and returns to idle.</item>
-    /// <item>After <see cref="HoldFrames"/> frames held: close the prompt, wait until it has gone, then run the scene's
-    /// skip function at level 2, which preempts the scene and jumps to its exit. The skip only counts polls, so it
-    /// can't depend on the prompt.</item>
+    /// <item>Held: show the prompt with its bar (<see cref="ShowPrompt"/>), then check the button every
+    /// <see cref="PollFrames"/> frames, redrawing it with the next bar step at even intervals so it is full one step before
+    /// the end. Letting go closes the box, waits for it to go, and returns to idle.</item>
+    /// <item>After <see cref="HoldFrames"/> frames held: close the box, wait until it has gone, then run the scene's skip
+    /// function at level 2, which preempts the scene and jumps to its exit. The skip only counts polls, so it can't
+    /// depend on the box.</item>
     /// </list>
-    /// The polls are written out one after another, so no variable is needed to count them.
+    /// The polls are written out one after another, so no variable is needed to count them. Returns the code and the
+    /// offsets (within it) of each label.
     /// </summary>
-    internal static byte[] WatcherCode(int window, int button, int firstString, byte[] beforeSkip, int sceneWorker, int skipFunction,
-        int loopJump, int cancelJump, int idleJump, out int cancelAt, out int idleAt)
+    internal static byte[] WatcherCode(int window, int button, int introString, int firstBarString, byte[] beforeSkip, int sceneWorker,
+        int skipFunction, WatcherLabels jumps, out WatcherLabels at)
     {
         var code = new List<byte>();
-        code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(idleJump)]);
-        code.AddRange(ShowPrompt(window, firstString));
+
+        code.AddRange(ShowPrompt(window, introString));
+        for (int poll = 0; poll < IntroFrames / IntroPollFrames; poll++)
+        {
+            code.AddRange(Atel.Call(Atel.Wait, IntroPollFrames));
+            code.AddRange([.. Atel.IsDown(button), .. Atel.GotoIf(jumps.Held)]);
+        }
+        code.AddRange(ClosePrompt(window));
+
+        int loopAt = code.Count;
+        code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(jumps.Idle)]);
+        int heldAt = code.Count;
+        code.AddRange(ShowPrompt(window, firstBarString));
         // The bar reaches full one step before the skip, so the last redraw never lands on the frame the box closes.
         int polls = HoldFrames / PollFrames, pollsPerStep = polls / (Steps + 1);
         for (int poll = 1; poll <= polls; poll++)
         {
             code.AddRange(Atel.Call(Atel.Wait, PollFrames));
-            code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(cancelJump)]);
-            if (poll % pollsPerStep == 0 && poll / pollsPerStep <= Steps) code.AddRange(ShowPrompt(window, firstString + poll / pollsPerStep));
+            code.AddRange([.. Atel.IsDown(button), .. Atel.GotoUnless(jumps.Cancel)]);
+            if (poll % pollsPerStep == 0 && poll / pollsPerStep <= Steps) code.AddRange(ShowPrompt(window, firstBarString + poll / pollsPerStep));
         }
         code.AddRange(ClosePrompt(window));
         code.AddRange(beforeSkip);
         code.AddRange(Atel.Run(2, sceneWorker, skipFunction, awaitEnd: true));
         code.Add(Atel.Return);
-        cancelAt = code.Count;
+
+        int cancelAt = code.Count;
         code.AddRange(ClosePrompt(window));
-        idleAt = code.Count;
+        int idleAt = code.Count;
         code.AddRange(Atel.Call(Atel.Wait, 1));
-        code.AddRange(Atel.Goto(loopJump));
+        code.AddRange(Atel.Goto(jumps.Loop));
         code.Add(Atel.Return);
+        at = new WatcherLabels(loopAt, heldAt, cancelAt, idleAt);
         return [.. code];
     }
 
@@ -181,16 +210,20 @@ public static class Cutscenes
     {
         int window = scene.MessageWindow;
         byte[] closePrompt = Atel.Call(Atel.CloseMessage, window);
-        int hostWorker, skipFunction;
+        int sceneFunction = ScenesFunction(script, scene);
+        int hostWorker, skipFunction, watchFunction;
         byte[] beforeSkip;
 
         if (scene.BuiltIn is { } b)
         {
+            // The game starts its watcher about 5 s in; that call becomes no-ops and the watcher starts with the scene.
+            script.OverwriteCode(b.Start.Offset, b.Start.Expected, new byte[b.Start.Expected.Length]);
             // The game's skip function gets the first-visit guard; its watcher-stop function closes our prompt first.
-            script.InsertCode(b.SkipStart.Offset, Guard(scene));
+            script.InsertCode(script.FunctionEntry(scene.SceneWorker, b.SkipFunction), Guard(scene));
             script.InsertCode(script.FunctionEntry(b.Worker, b.StopFunction), closePrompt);
             hostWorker = b.Worker;
             skipFunction = b.SkipFunction;
+            watchFunction = b.WatchFunction;
             beforeSkip = b.BeforeSkip;
         }
         else
@@ -198,30 +231,26 @@ public static class Cutscenes
             if (scene.HostWorker < 0) throw new InvalidOperationException($"{scene.Name} needs a host worker for its skip watcher.");
             hostWorker = scene.HostWorker;
             skipFunction = script.AddFunction(scene.SceneWorker, script.AppendCode([.. Guard(scene), Atel.Return]));
+            watchFunction = -1;
             beforeSkip = [];
         }
 
-        int jumps = script.JumpCount(hostWorker);
-        byte[] watcher = WatcherCode(window, button.Index, firstString, beforeSkip, scene.SceneWorker, skipFunction,
-            loopJump: jumps, cancelJump: jumps + 1, idleJump: jumps + 2, out int cancelAt, out int idleAt);
+        int count = script.JumpCount(hostWorker);
+        var labels = new WatcherLabels(Loop: count, Held: count + 1, Cancel: count + 2, Idle: count + 3);
+        byte[] watcher = WatcherCode(window, button.Index, firstString, firstString + 1, beforeSkip, scene.SceneWorker, skipFunction, labels, out var at);
         int start = script.AppendCode(watcher);
-        script.AddJump(hostWorker, start);
-        script.AddJump(hostWorker, start + cancelAt);
-        script.AddJump(hostWorker, start + idleAt);
+        foreach (int offset in new[] { at.Loop, at.Held, at.Cancel, at.Idle }) script.AddJump(hostWorker, start + offset);
 
-        if (scene.BuiltIn is { } builtIn)
-        {
-            // The scene already starts this function and stops it; point it at the new watcher.
-            script.SetFunctionEntry(hostWorker, builtIn.WatchFunction, start);
-        }
+        if (watchFunction >= 0) script.SetFunctionEntry(hostWorker, watchFunction, start);
         else
         {
-            int watch = script.AddFunction(hostWorker, start);
+            watchFunction = script.AddFunction(hostWorker, start);
             int stop = script.AddFunction(hostWorker, script.AppendCode([.. closePrompt, Atel.DirectReturn, Atel.Return]));
-            // Start the watcher with the scene, and stop it when the scene reaches its exit.
-            script.InsertCode(script.FunctionEntry(scene.SceneWorker, ScenesFunction(script, scene)), Atel.Run(1, hostWorker, watch, awaitEnd: false));
+            // Stop the watcher when the scene reaches its exit.
             script.InsertCode(script.JumpTarget(scene.Exit.Worker, scene.Exit.Jump), Atel.Run(2, hostWorker, stop, awaitEnd: false));
         }
+        // Start the watcher with the scene's first instruction.
+        script.InsertCode(script.FunctionEntry(scene.SceneWorker, sceneFunction), Atel.Run(1, hostWorker, watchFunction, awaitEnd: false));
     }
 
     private static int ScenesFunction(EventScriptEditor script, SkippableScene scene)
@@ -263,13 +292,15 @@ public static class Cutscenes
     }
 
     /// <summary>
-    /// "Hold [button] to skip [###--]", one string per bar step. English in every language for now; the Japanese, Chinese
-    /// and Korean fonts get it in fullwidth letters with a ＊/－ bar, since they have no [ ] or #.
+    /// The intro "Hold [button] to skip", then "Hold [button] to skip [###--]", one string per bar step. English in every
+    /// language for now; the Japanese, Chinese and Korean fonts get it in fullwidth letters with a ＊/－ bar, since they
+    /// have no [ ] or #.
     /// </summary>
     internal static IEnumerable<byte[]> PromptStrings(FfxCharset charset, string charsetId, SkipButton button)
     {
         bool latin = charsetId == "us";
         byte[] buttonText = button.Icon is { } icon ? [0x0B, icon] : charset.Encode(button.Name);
+        yield return [.. ShowInstantly, .. charset.Encode("Hold "), .. buttonText, .. charset.Encode(" to skip")];
         for (int step = 0; step <= Steps; step++)
         {
             string bar = latin ? $"[{new string('#', step)}{new string('-', Steps - step)}]" : new string('*', step) + new string('-', Steps - step);

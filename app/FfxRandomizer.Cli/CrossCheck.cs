@@ -82,7 +82,7 @@ internal static partial class CrossCheck
                 {
                     byte[] guard = Cutscenes.Guard(Cutscenes.All[0]);
                     int codeStart = 0x40 + (int)BitConverter.ToUInt32(eventBytes, 0x40 + 0x30);
-                    int at = CutsceneSkipFeature.InsertedCode(original.ReadFile(cutscenePath), eventBytes)
+                    int at = CutsceneSkipFeature.ChangedCode(original.ReadFile(cutscenePath), eventBytes).Inserted
                         .Select(r => eventBytes.AsSpan(codeStart + r.Offset, r.Length).IndexOf(guard) is int i and >= 0 ? codeStart + r.Offset + i : -1)
                         .First(i => i >= 0);
                     eventBytes[at + 4] ^= 1;

@@ -60,20 +60,30 @@ public class CutsceneTests
         var after = new EventScriptEditor(EventFile.Read(ebp).Chunk(0)!);
         var watcher = Campfire.BuiltIn!;
 
-        // Same functions; the watch function now starts in new code that tests whether R1 (button 3) is down, polls it,
-        // never uses the press-only 0x0046 test, and runs w0D::f03 at level 2.
+        // Same functions; the watch function now starts in new code that shows the intro prompt, tests whether R1
+        // (button 3) is down, polls it, never uses the press-only 0x0046 test, and runs w0D::f03 at level 2.
         Assert.Equal(before.FunctionCount(watcher.Worker), after.FunctionCount(watcher.Worker));
-        Assert.Equal(before.JumpCount(watcher.Worker) + 3, after.JumpCount(watcher.Worker));
+        Assert.Equal(before.JumpCount(watcher.Worker) + 4, after.JumpCount(watcher.Worker));
         int start = after.FunctionEntry(watcher.Worker, watcher.WatchFunction);
         Assert.True(start >= before.CodeLength);
         byte[] code = after.Code(start, after.CodeLength - start).ToArray();
-        Assert.True(code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.IsDown(3)) == 0);
-        Assert.Equal(1 + Cutscenes.HoldFrames / Cutscenes.PollFrames, Occurrences(code, Atel.IsDown(3)));
+        byte[] show = Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0);
+        int firstShow = code.AsSpan().IndexOf(show);
+        Assert.True(firstShow > 0 && firstShow < code.AsSpan().IndexOf((ReadOnlySpan<byte>)Atel.IsDown(3)), "the intro prompt is shown before the first button test");
+        Assert.Equal(Cutscenes.IntroFrames / Cutscenes.IntroPollFrames + 1 + Cutscenes.HoldFrames / Cutscenes.PollFrames, Occurrences(code, Atel.IsDown(3)));
         Assert.Equal(0, Occurrences(code, [0xB5, 0x46, 0x00]));
-        // Shown, then redrawn once per bar step; closed and waited for on both the skip and the release paths.
-        Assert.Equal(1 + Cutscenes.Steps, Occurrences(code, Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0)));
+        // Shown for the intro, shown with an empty bar, then redrawn once per bar step; closed and waited for after the
+        // intro, on the skip and on release.
+        Assert.Equal(Cutscenes.Steps + 2, Occurrences(code, show));
         byte[] closeAndWait = [.. Atel.Call(Atel.CloseMessage, Campfire.MessageWindow), .. Atel.Call(Atel.WaitForText, Campfire.MessageWindow, 1)];
-        Assert.Equal(2, Occurrences(code, closeAndWait));
+        Assert.Equal(3, Occurrences(code, closeAndWait));
+        // The scene starts the watcher at its first instruction; the game's own start, later in the scene, is blanked out.
+        byte[] startWatcher = Atel.Run(1, watcher.Worker, watcher.WatchFunction, awaitEnd: false);
+        Assert.Equal(startWatcher, after.Code(after.FunctionEntry(0x0D, 2), startWatcher.Length).ToArray());
+        var changes = CutsceneSkipFeature.ChangedCode(original.ReadFile(Cutscenes.EventPath("znkd0600")), ebp);
+        var nopped = Assert.Single(changes.Nopped);
+        Assert.Equal(watcher.Start.Offset, nopped.Original);
+        Assert.Equal(new byte[watcher.Start.Expected.Length], after.Code(nopped.Offset, nopped.Length).ToArray());
         byte[] skip = Atel.Run(2, 0x0D, watcher.SkipFunction, awaitEnd: true);
         int skipAt = code.AsSpan().IndexOf(skip);
         Assert.True(code.AsSpan(0, skipAt).LastIndexOf(closeAndWait) > code.AsSpan(0, skipAt).LastIndexOf(Atel.Call(Atel.ShowMessage, Campfire.MessageWindow, 0)),
@@ -83,7 +93,7 @@ public class CutsceneTests
         Assert.Equal(Cutscenes.Guard(Campfire), after.Code(after.FunctionEntry(0x0D, watcher.SkipFunction), Cutscenes.Guard(Campfire).Length).ToArray());
         Assert.Equal(Atel.Call(Atel.CloseMessage, Campfire.MessageWindow), after.Code(after.FunctionEntry(watcher.Worker, watcher.StopFunction), 6).ToArray());
         // The scene's exit moved with its code and the guard jumps there.
-        Assert.Equal(after.JumpTarget(0x0D, 0x13), CutsceneSkipFeature.InsertedCode(original.ReadFile(Cutscenes.EventPath("znkd0600")), ebp)
+        Assert.Equal(after.JumpTarget(0x0D, 0x13), CutsceneSkipFeature.ChangedCode(original.ReadFile(Cutscenes.EventPath("znkd0600")), ebp).Inserted
             .Aggregate(0x4426, (at, r) => r.Offset <= at ? at + r.Length : at));
     }
 
@@ -98,8 +108,8 @@ public class CutsceneTests
         {
             byte[] before = original.ReadFile(Cutscenes.TextPath(folder, "znkd0600"));
             byte[] after = files[Cutscenes.TextPath(folder, "znkd0600")];
-            Assert.Equal(EventText.Count(before) + Cutscenes.Steps + 1, EventText.Count(after));
-            Assert.Empty(CutsceneSkipFeature.CheckText(before, after, Cutscenes.Steps + 1));
+            Assert.Equal(EventText.Count(before) + Cutscenes.PromptCount, EventText.Count(after));
+            Assert.Empty(CutsceneSkipFeature.CheckText(before, after, Cutscenes.PromptCount));
         }
         byte[] english = files[Cutscenes.TextPath("new_uspc", "znkd0600")];
         int last = EventText.Count(english) - 1;
