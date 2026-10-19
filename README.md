@@ -38,6 +38,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Aeons | Base stats, stat growth, power-up items |
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
+| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers only the opening Zanarkand Ruins campfire scene so far |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.
@@ -113,3 +114,4 @@ The original C++ FFXRando source is kept in `src/` as the reference for porting.
 - [FFXDataParser](https://github.com/Karifean/FFXDataParser) by Karifean: game data research, and the independent check used in development.
 - [VBFTool](https://github.com/topher-au/VBFTool) by topher-au: the VBF archive format.
 - The [Fahrenheit](https://github.com/fahrenheit-crew/fahrenheit) project and the Cid's Salvage Ship community.
+- [CSR2](https://github.com/fahrenheit-crew/fh-mods-csr), the Fahrenheit cutscene remover by The Fahrenheit contributors (MIT): which scenes to skip and where each one exits to.

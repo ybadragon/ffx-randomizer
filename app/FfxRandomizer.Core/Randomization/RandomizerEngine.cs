@@ -44,6 +44,7 @@ public static class RandomizerEngine
         new EnemyEncountersFeature(),
         new EnemyStatsFeature(),
         new BlitzballStatsFeature(),
+        new CutsceneSkipFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

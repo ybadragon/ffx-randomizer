@@ -48,6 +48,7 @@ public static class SaveImpacts
         ["nodes"] = new(SaveImpact.NewGameOnly, "The whole Sphere Grid is stored in your save."),
         ["locks"] = new(SaveImpact.NewGameOnly, "The whole Sphere Grid is stored in your save."),
         ["blitz"] = new(SaveImpact.ExistingSaves, "Your save keeps each player's level; their stats come from these curves."),
+        ["cutscenes"] = new(SaveImpact.ExistingSaves, "Scene scripts are read each time you enter an area."),
     };
 
     /// <summary>Null for options that change nothing in the game (like the spoiler log).</summary>

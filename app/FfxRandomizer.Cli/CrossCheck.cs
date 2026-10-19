@@ -76,6 +76,17 @@ internal static partial class CrossCheck
                     if (blitz.Path.EndsWith("/bltz0002.ebp")) ebp[blitz.Offsets[BlitzStat.CA] + 30 * BlitzGrowth.Size] ^= 1;
                     if (blitz.Path.EndsWith("/luca0400.ebp")) ebp[blitz.Offsets[BlitzStat.HP] + 2 * BlitzGrowth.Size] ^= 1;
                 }
+                // Cutscenes: the GameMoment threshold in the first-visit guard (AE0200 -> AE0300).
+                string cutscenePath = Cutscenes.EventPath(Cutscenes.All[0].EventId);
+                if (copy.TryGetValue(cutscenePath, out byte[]? eventBytes))
+                {
+                    byte[] guard = Cutscenes.Guard(Cutscenes.All[0]);
+                    int codeStart = 0x40 + (int)BitConverter.ToUInt32(eventBytes, 0x40 + 0x30);
+                    int at = CutsceneSkipFeature.ChangedCode(original.ReadFile(cutscenePath), eventBytes).Inserted
+                        .Select(r => eventBytes.AsSpan(codeStart + r.Offset, r.Length).IndexOf(guard) is int i and >= 0 ? codeStart + r.Offset + i : -1)
+                        .First(i => i >= 0);
+                    eventBytes[at + 4] ^= 1;
+                }
                 files = copy;
             }
 
@@ -164,6 +175,11 @@ internal static partial class CrossCheck
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareBlitzball(result.Files, blitzball, stdout));
                 checkedAreas.Add($"{blitzball.Count} Blitzball players");
+            }
+            if (result.Spoiler[CutsceneSkipFeature.Section] is JsonArray scenes)
+            {
+                problems.AddRange(CompareCutscenes(original, result.Settings, files));
+                checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"

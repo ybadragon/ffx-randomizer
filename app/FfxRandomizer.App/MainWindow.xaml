@@ -74,6 +74,23 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <StackPanel Margin="0,12,0,0" DataContext="{Binding Dropdown}"
+                                    Visibility="{Binding IsVisible, Converter={StaticResource Show}, FallbackValue=Collapsed}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Label}" Style="{StaticResource Strong}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                <ComboBox ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Id"
+                                          SelectedValue="{Binding SelectedId}" MinWidth="180" AutomationProperties.Name="{Binding Label}" />
+                                <Button Style="{StaticResource SecondaryButton}" Content="Record…" Margin="8,0,0,0"
+                                        Command="{Binding RecordCommand}" ToolTip="Press the button on your controller (5 seconds)"
+                                        Visibility="{Binding CanRecord, Converter={StaticResource Show}}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding RecordStatus}" Style="{StaticResource Small}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                            <Border Background="{StaticResource WarnBack}" CornerRadius="4" Padding="10,6" Margin="0,6,0,0"
+                                    Visibility="{Binding HasWarning, Converter={StaticResource Show}}">
+                                <TextBlock Text="{Binding Warning}" Style="{StaticResource Small}" Foreground="{StaticResource WarnText}" TextWrapping="Wrap" />
+                            </Border>
+                            <TextBlock Text="{Binding Hint}" Style="{StaticResource Small}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
                         <ItemsControl ItemsSource="{Binding SubOptions}" Margin="0,10,0,0"
                                       Visibility="{Binding ShowSubOptions, Converter={StaticResource Show}}">
                             <ItemsControl.ItemTemplate>
