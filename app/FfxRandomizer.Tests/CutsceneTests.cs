@@ -136,7 +136,7 @@ public class CutsceneTests
         changed[0x40 + BitConverter.ToInt32(changed, 0x40 + 0x30) + Campfire.SceneStart.Offset] ^= 1;
         byte[]? Read(string p) => p == path ? changed : original.IndexOf(p) >= 0 ? original.ReadFile(p) : null;
 
-        var error = Assert.Throws<EventMismatchException>(() => Cutscenes.Build(Read, Campfire, Cutscenes.Hold, SkipButtons.Default));
+        var error = Assert.Throws<EventMismatchException>(() => Cutscenes.Build(Read, [Campfire], Cutscenes.Hold, SkipButtons.Default));
         Assert.Contains("znkd0600", error.Message);
     }
 

@@ -20,16 +20,17 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         string mode = Mode(context.Settings);
         var button = Button(context.Settings);
-        foreach (var scene in Cutscenes.All)
+        foreach (var scenes in Cutscenes.ByEvent)
         {
-            foreach (var (path, bytes) in Cutscenes.Build(context.Original, scene, mode, button)) context.Replace(path, bytes);
-            context.Spoil(Section, new
-            {
-                Scene = scene.Name,
-                scene.Area,
-                Event = scene.EventId,
-                Skip = mode == Cutscenes.Always ? "always" : $"hold {button.Label} for about a second",
-            });
+            foreach (var (path, bytes) in Cutscenes.Build(context.Original, [.. scenes], mode, button)) context.Replace(path, bytes);
+            foreach (var scene in scenes)
+                context.Spoil(Section, new
+                {
+                    Scene = scene.Name,
+                    scene.Area,
+                    Event = scene.EventId,
+                    Skip = mode == Cutscenes.Always ? "always" : $"hold {button.Label} for about a second",
+                });
         }
     }
 
@@ -37,9 +38,13 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         string mode = Mode(context.Settings);
         var button = Button(context.Settings);
-        foreach (var scene in Cutscenes.All)
+        foreach (var scenes in Cutscenes.ByEvent)
         {
-            var expected = Cutscenes.Build(context.Original, scene, mode, button);
+            var scene = scenes.First();
+            // The skip-safety audit, run again here so no edit ships with something it would wrongly bypass.
+            foreach (var s in scenes)
+                foreach (string problem in Cutscenes.AuditOf(context.Original, s).Problems()) yield return $"{s.Name}: {problem}";
+            var expected = Cutscenes.Build(context.Original, [.. scenes], mode, button);
             foreach (var (path, bytes) in expected)
             {
                 if (!context.ChangedFiles.TryGetValue(path, out byte[]? written))

@@ -8,6 +8,7 @@ using FfxRandomizer.Core.Storage;
 //   ffxr apply [--seed <text>] <option-id> | <group>=<choice>...     e.g. ffxr apply tidus pstats=random
 //   ffxr restore
 //   ffxr save info <file> | ffxr save jump ...       see SaveCommands.cs
+//   ffxr cutscenes find | audit | saves ...          see CutsceneCommands.cs
 
 var game = GameInstall.FindSteamInstall();
 if (game is null)
@@ -68,8 +69,11 @@ try
         case "save":
             return SaveCommands.Run(service, args[1..]);
 
+        case "cutscenes":
+            return CutsceneCommands.Run(service, args[1..]);
+
         default:
-            Console.Error.WriteLine($"Unknown command {command}. Use status, apply, crosscheck, restore or save.");
+            Console.Error.WriteLine($"Unknown command {command}. Use status, apply, crosscheck, restore, save or cutscenes.");
             return 2;
     }
 }
