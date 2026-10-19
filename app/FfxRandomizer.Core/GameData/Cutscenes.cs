@@ -4,7 +4,7 @@ namespace FfxRandomizer.Core.GameData;
 /// A cutscene that can be skipped: the function that plays it and the label its skip jumps to. Both edits insert a short
 /// check at the start of the function, so with the check false the scene plays exactly as before.
 /// </summary>
-public sealed record SkippableScene(string Name, string Area, EventPatch Always, EventPatch HoldSelect);
+public sealed record SkippableScene(string Name, string Area, EventPatch Always, EventPatch HoldSelect, EventPatch HoldAnyButton);
 
 /// <summary>
 /// The scenes "Skip cutscenes" covers. The idea of jumping from a scene's start straight to its exit comes from CSR2,
@@ -30,14 +30,18 @@ public static class Cutscenes
     private static byte[] SkipWhileBefore(int moment, int exit) =>
         [.. PushGameMoment, .. PushInt16(moment), LessThan, .. JumpIfTrue(exit)];
 
-    /// <summary>if (GameMoment &lt; <paramref name="moment"/> and Select is held) jump to <paramref name="exit"/>.</summary>
-    private static byte[] SkipWhileBeforeIfSelectHeld(int moment, int exit) =>
-        [.. PushGameMoment, .. PushInt16(moment), LessThan, .. HeldButtons, .. PushInt16(SelectButtonBit), BitwiseAnd, LogicalAnd, .. JumpIfTrue(exit)];
+    /// <summary>Diagnostic mask: any held button (0xFFFF, pushed as int16 -1, so every bit is set).</summary>
+    public const ushort AnyButtonMask = 0xFFFF;
+
+    /// <summary>if (GameMoment &lt; <paramref name="moment"/> and a button in <paramref name="mask"/> is held) jump to <paramref name="exit"/>.</summary>
+    private static byte[] SkipWhileBeforeIfHeld(int moment, int exit, ushort mask) =>
+        [.. PushGameMoment, .. PushInt16(moment), LessThan, .. HeldButtons, .. PushInt16(mask), BitwiseAnd, LogicalAnd, .. JumpIfTrue(exit)];
 
     private static SkippableScene Scene(string name, string area, string eventId, int codeOffset, byte[] expected, int moment, EventJump exit) =>
         new(name, area,
             new EventPatch(eventId, codeOffset, expected, SkipWhileBefore(moment, exit.Jump), EventPatchKind.InsertBefore, [exit]),
-            new EventPatch(eventId, codeOffset, expected, SkipWhileBeforeIfSelectHeld(moment, exit.Jump), EventPatchKind.InsertBefore, [exit]));
+            new EventPatch(eventId, codeOffset, expected, SkipWhileBeforeIfHeld(moment, exit.Jump, SelectButtonBit), EventPatchKind.InsertBefore, [exit]),
+            new EventPatch(eventId, codeOffset, expected, SkipWhileBeforeIfHeld(moment, exit.Jump, AnyButtonMask), EventPatchKind.InsertBefore, [exit]));
 
     public static IReadOnlyList<SkippableScene> All { get; } =
     [

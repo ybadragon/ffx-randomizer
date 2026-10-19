@@ -38,6 +38,8 @@ internal static partial class CrossCheck
                 yield return $"{patch.EventId}: expected \"GameMoment < 2 ... -> {exitLabel}\" at {patch.CodeOffset:X4} but FFXDataParser reads \"{check.Trim()}\"";
             if (mode == CutsceneSkipFeature.HoldSelect && !check.Contains("HeldButtonsBitfield [0046h] & [Select [08h]]", StringComparison.Ordinal))
                 yield return $"{patch.EventId}: the Select check isn't there; FFXDataParser reads \"{check.Trim()}\"";
+            if (mode == CutsceneSkipFeature.HoldAnyButton && !check.Contains("HeldButtonsBitfield [0046h] &", StringComparison.Ordinal))
+                yield return $"{patch.EventId}: the any-button check isn't there; FFXDataParser reads \"{check.Trim()}\"";
             string next = $"{patch.CodeOffset + patch.Bytes.Length:X4} ";
             if (!lines.Any(l => l.StartsWith(next, StringComparison.Ordinal) && l.Contains("Map.setGfxVisibility", StringComparison.Ordinal)))
                 yield return $"{patch.EventId}: the scene's original first instruction isn't at {patch.CodeOffset + patch.Bytes.Length:X4}";

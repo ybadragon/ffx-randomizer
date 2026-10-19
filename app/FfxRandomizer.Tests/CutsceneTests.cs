@@ -81,7 +81,8 @@ public class CutsceneTests
     [Theory]
     [InlineData("hold")]
     [InlineData("always")]
-    public void Both_modes_insert_the_check_and_pass_every_check(string mode)
+    [InlineData("anybutton")]
+    public void Every_mode_inserts_the_check_and_passes_every_check(string mode)
     {
         if (Original.Value is not { } original) return;
 
@@ -98,7 +99,8 @@ public class CutsceneTests
         Assert.Equal(patch.Expected, script.Code(patch.CodeOffset + patch.Bytes.Length, patch.Expected.Length).ToArray());
         Assert.Equal(patch.CodeOffset, script.FunctionEntry(0x0D, 2));
         Assert.Equal(0x4426 + patch.Bytes.Length, script.JumpTarget(0x0D, 0x13));
-        Assert.Equal(mode == "hold", patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xB5, 0x46, 0x00]) >= 0);
+        Assert.Equal(mode != "always", patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xB5, 0x46, 0x00]) >= 0);
+        if (mode == "anybutton") Assert.True(patch.Bytes.AsSpan().IndexOf((ReadOnlySpan<byte>)[0xAE, 0xFF, 0xFF, 0x05]) >= 0);
     }
 
     [Fact]
