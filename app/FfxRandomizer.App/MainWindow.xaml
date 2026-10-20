@@ -198,9 +198,18 @@
                                 <TextBlock Text="In your game now" />
                             </Border>
                         </StackPanel>
-                        <TextBlock Style="{StaticResource Small}" Margin="0,4,0,6">
-                            <Run Text="{Binding Meta, Mode=OneWay}" /><Run Text="{Binding Seed, Mode=OneWay}" Foreground="{StaticResource Text}" FontWeight="SemiBold" /><Run Text="{Binding Summary, Mode=OneWay}" />
-                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,6">
+                            <TextBlock Style="{StaticResource Small}" VerticalAlignment="Center">
+                                <Run Text="{Binding Meta, Mode=OneWay}" /><Run Text="{Binding Seed, Mode=OneWay}" Foreground="{StaticResource Text}" FontWeight="SemiBold" />
+                            </TextBlock>
+                            <Button Style="{StaticResource IconButton}" Command="{Binding CopySeedCommand}" Margin="4,0,0,0" Padding="2"
+                                    VerticalAlignment="Center" ToolTip="Copy seed" AutomationProperties.Name="Copy seed">
+                                <Path Style="{StaticResource IconPath}" Data="M5.5,5.5 L13.5,5.5 L13.5,13.5 L5.5,13.5 Z M3,10.5 L2.5,10.5 L2.5,2.5 L10.5,2.5 L10.5,3" />
+                            </Button>
+                            <TextBlock Style="{StaticResource Small}" Text="Copied" Foreground="{StaticResource GoodText}" Margin="2,0,0,0" VerticalAlignment="Center"
+                                       Visibility="{Binding SeedCopied, Converter={StaticResource Show}}" />
+                            <TextBlock Style="{StaticResource Small}" Text="{Binding Summary, Mode=OneWay}" VerticalAlignment="Center" />
+                        </StackPanel>
                         <ContentControl Content="{Binding Tags}" ContentTemplate="{StaticResource TagList}" Focusable="False" />
                         <TextBlock Text="{Binding VersionNote}" Style="{StaticResource Small}" Foreground="{StaticResource WarnText}"
                                    Visibility="{Binding FromOtherVersion, Converter={StaticResource Show}}" />

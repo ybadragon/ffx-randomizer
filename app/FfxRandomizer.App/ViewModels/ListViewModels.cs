@@ -59,6 +59,25 @@ public sealed partial class HistoryItemViewModel(HistoryEntry entry, bool curren
     [RelayCommand] private void ReplaySeed() => main.UseHistorySettings(entry, replaySeed: true);
     [RelayCommand] private void OpenSpoiler() => main.OpenFile(entry.SpoilerPath);
     [RelayCommand] private void Delete() => main.DeleteHistory(entry);
+
+    [ObservableProperty] private bool _seedCopied;
+
+    [RelayCommand]
+    private async Task CopySeed()
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(entry.Seed);
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Another app is holding the clipboard; nothing was copied.
+            return;
+        }
+        SeedCopied = true;
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        SeedCopied = false;
+    }
 }
 
 internal static class Format
