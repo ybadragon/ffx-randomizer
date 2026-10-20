@@ -11,21 +11,6 @@ internal static class SoftResetCommands
     public static int Run(RandomizerService service, string[] args)
     {
         var original = service.Patcher.OpenOriginal();
-        if (args.FirstOrDefault() == "buttonstmp")
-        {
-            var c = new Dictionary<string, int>();
-            foreach (string n in original.Names.Where(n => n.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase)))
-            {
-                var t = new ScriptTables(EventFile.Read(original.ReadFile(n)).Chunk(EventFile.ScriptChunk)!);
-                byte[] code = t.Code.ToArray();
-                for (int at = 0; at < code.Length && AtelCode.StatementAt(code, at) is { } s; at = s.End)
-                    for (int i = 1; i < s.Instructions.Count; i++)
-                        if (s.Instructions[i].Op is 0xB5 or 0xD8 && s.Instructions[i].Operand is 0x4C or 0x4D or 0x4E or 0x4F or 0x50 && AtelCode.Constant(s.Instructions[i - 1], t) is int btn && btn is 9 or 10)
-                        { string k = $"{Path.GetFileNameWithoutExtension(n)} call {s.Instructions[i].Operand:X4} button {btn}"; c[k] = c.GetValueOrDefault(k) + 1; }
-            }
-            foreach (var (k, v) in c) Console.WriteLine($"{v,4} {k}");
-            return 0;
-        }
         if (args.FirstOrDefault() != "plan")
         {
             Console.Error.WriteLine("Use: ffxr softreset plan");
