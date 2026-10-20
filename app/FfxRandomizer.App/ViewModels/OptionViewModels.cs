@@ -109,7 +109,7 @@ public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action ch
         }
         if (SkipButtons.FromXbox(pressed) is not { } button)
         {
-            RecordStatus = $"{pressed} can't be used to skip. Press a face button, a shoulder button, a trigger, a stick click, Back or Start.";
+            RecordStatus = $"{pressed} can't be used to skip. Press a face button, a shoulder button, a trigger, Back or Start.";
             return;
         }
         SelectedId = button.Id;
@@ -130,7 +130,7 @@ public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action ch
         var buttons = held.Select(SkipButtons.FromXbox).ToList();
         if (buttons.Any(b => b is null))
         {
-            RecordStatus = $"{string.Join(" + ", held.Where(h => SkipButtons.FromXbox(h) is null))} can't be part of the combo. Use face buttons, shoulder buttons, triggers, stick clicks, Back or Start.";
+            RecordStatus = $"{string.Join(" + ", held.Where(h => SkipButtons.FromXbox(h) is null))} can't be part of the combo. Use face buttons, shoulder buttons, triggers, Back or Start.";
             return;
         }
         if (buttons.Count > SoftReset.MaxComboButtons)

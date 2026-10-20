@@ -310,7 +310,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         int meta = (int)BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(0x2C));
         if (meta == 0) yield break;
-        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
+        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
         int map = (int)BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(meta + 0x3C));
         if (map == 0) yield break;
         yield return map + 0x08;

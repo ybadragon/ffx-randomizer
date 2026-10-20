@@ -11,8 +11,9 @@ namespace FfxRandomizer.Core.GameData.Events;
 /// worker header offsets from 0x38.</item>
 /// <item>Worker header (0x34 bytes): function count 0x08, jump count 0x0A; pointers to variable declarations 0x14,
 /// ref ints 0x18, ref floats 0x1C, function entries 0x20, jumps 0x24, private data 0x2C, shared data 0x30.</item>
-/// <item>Meta struct header (at 0x2C): pointers at +0x0C, +0x10, +0x18, +0x1C, +0x24, +0x28, +0x2C, +0x3C; the
-/// object at +0x3C holds two more at +0x08 and +0x0C.</item>
+/// <item>Meta struct header (at 0x2C): pointers at +0x0C, +0x10, +0x18, +0x1C, +0x20, +0x24, +0x28, +0x2C, +0x3C (+0x20,
+/// which FFXDataParser reads as a plain value, is 0 in most events and in 25, bsil0300 among them, a pointer to just
+/// below the meta struct); the object at +0x3C holds two more at +0x08 and +0x0C.</item>
 /// <item>After the code: shared data (16-aligned), meta struct, event data, map table, area names, then per worker its
 /// function entry table, jump table and private data. Entry points and jump targets are code offsets.</item>
 /// </list>
@@ -260,6 +261,36 @@ public sealed class EventScriptEditor
         _edits.Add((at + count, -count));
     }
 
+    /// <summary>
+    /// Aligned words after the code that look like pointers into the data after the code (an offset from the code's end
+    /// to the chunk's end, a multiple of 4) but that the editor doesn't move. Any edit moves that data, so if one of
+    /// these is a pointer it goes stale (a structure the game reads that FFXDataParser doesn't describe). Most may be
+    /// numbers that only look like offsets, but an event with any isn't edited.
+    /// </summary>
+    public IReadOnlyList<(int Field, int Value)> UntrackedPointerCandidates()
+    {
+        int codeEnd = CodeStart + CodeLength, end = _s.Length;
+        var known = PointerFields().ToHashSet();
+        var targets = known.Select(f => (int)U32(_s, f)).Where(v => v > 0).Order().ToList();
+        int NextStructure(int after) => targets.FirstOrDefault(t => t > after, end);
+        // Variables' storage holds game values, not file offsets: the shared data (up to the next structure) and each
+        // worker's private data.
+        var skip = new List<(int From, int To)> { (SharedDataStart, NextStructure(SharedDataStart)) };
+        for (int w = 0; w < WorkerCount; w++)
+            if (U32(_s, Worker(w) + 0x2C) is var p and > 0) skip.Add(((int)p, NextStructure((int)p)));
+        var found = new List<(int, int)>();
+        for (int at = (codeEnd + 3) & ~3; at + 4 <= end; at += 4)
+        {
+            if (known.Contains(at) || skip.Any(r => at >= r.From && at < r.To)) continue;
+            int value = (int)U32(_s, at);
+            if (value >= codeEnd && value < end && value % 4 == 0) found.Add((at, value));
+        }
+        return found;
+    }
+
+    /// <summary>The meta struct's +0x20 word: 0, or a pointer to just below the meta struct (see the summary above).</summary>
+    public int MetaPointer20 => U32(_s, MetaField) is var meta and > 0 ? (int)U32(_s, (int)meta + 0x20) : 0;
+
     /// <summary>Chunk offsets of every u32 the editor keeps pointing at the right place when things move.</summary>
     public IReadOnlyList<int> KnownPointerFields => [.. PointerFields()];
 
@@ -278,7 +309,7 @@ public sealed class EventScriptEditor
         }
         int meta = (int)U32(_s, MetaField);
         if (meta == 0) yield break;
-        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
+        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
         int mapPointers = (int)U32(_s, meta + 0x3C);
         if (mapPointers == 0) yield break;
         yield return mapPointers + 0x08;

@@ -12,10 +12,35 @@ public sealed class SoftResetFeature : IRandomizerFeature
 {
     public const string Section = "softreset", Id = "softreset", ButtonsId = "softresetbuttons";
 
-    public static bool On(RandomizerSettings s) => s.IsOn(Id);
+    /// <summary>
+    /// Soft reset isn't released: in-game, edits to some rooms crashed them. Off unless FFXR_SOFTRESET=1, so released
+    /// builds neither show the option nor write a soft-reset byte (tests switch it on).
+    /// </summary>
+    public static bool Available { get; set; } = Environment.GetEnvironmentVariable("FFXR_SOFTRESET") == "1";
+
+    /// <summary>The combo setting.</summary>
+    public static OptionDropdown ComboDropdown { get; } = new("softresetbuttons", "Combo",
+        [.. SoftReset.Combos.Select(c => new Choice(c, SoftReset.ComboLabel(c)))],
+        ShownFor: new HashSet<string>(),
+        Hint: "Hold all of them together. Use Record to hold up to three buttons on your controller instead.")
+    {
+        LabelOf = id => SoftReset.IsCombo(id) ? SoftReset.ComboLabel(id) : null,
+    };
+
+    /// <summary>The option box (shown only while <see cref="Available"/>).</summary>
+    public static OptionGroup Group { get; } = new(Id, "Soft reset: hold a button combo to return to the title screen",
+        "Holding the combo for about a second fades to black and goes back to the title screen, as after a game over. Works in the field (almost every area, cutscenes included), not in battles or menus. Your last save is untouched.",
+        HasToggle: true, Choices: [], SubOptions: [],
+        Warning: "Experimental: works in some areas in-game so far. A few areas don't have it (`ffxr softreset plan` lists them).",
+        Badge: "Experimental", Implemented: true)
+    {
+        Dropdown = ComboDropdown,
+    };
+
+    public static bool On(RandomizerSettings s) => Available && s.IsOn(Id);
 
     /// <summary>The combo's id (see <see cref="SoftReset.Combos"/>).</summary>
-    public static string Combo(RandomizerSettings s) => s.ChoiceOf(OptionCatalog.AllGroups.First(g => g.Id == Id).Dropdown!);
+    public static string Combo(RandomizerSettings s) => s.ChoiceOf(ComboDropdown);
 
     /// <summary>The combo's game button numbers.</summary>
     public static int[] Buttons(RandomizerSettings s) => SoftReset.ComboIndexes(Combo(s));

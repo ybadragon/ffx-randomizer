@@ -20,7 +20,7 @@ public static partial class SoftReset
     /// The combos offered: button ids joined by "+" in the skip list's order (see <see cref="ComboId"/>), the first the
     /// default. A recorded one may be any 1-3 buttons.
     /// </summary>
-    public static IReadOnlyList<string> Combos { get; } = ["l3+r3", "l1+r1+start", "select+l1+r1", "select+l2+r2", "select+start"];
+    public static IReadOnlyList<string> Combos { get; } = ["l1+r1+start", "select+l1+r1", "select+l2+r2", "select+start"];
 
     public const int MaxComboButtons = 3;
 

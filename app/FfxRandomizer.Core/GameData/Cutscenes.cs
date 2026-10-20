@@ -89,46 +89,17 @@ public static class Cutscenes
                 SkipStart: new(0x437D, [0xAE, 0x1E, 0x00, 0xD8, 0x05, 0x40]), // SgEvent.fadeoutToBlack(30)
                 BeforeSkip: Atel.Set(0x23, 1))), // eventVar0014 = true, as the game's watcher does
 
-        // Found by `ffxr cutscenes find` and checked by SceneAudit; MomentFrom..MomentBelow keeps late-game revisits vanilla.
-        new("Dream Zanarkand highway (GameMoment 8)", "Zanarkand", "znkd0800", SceneWorker: 0x34,
-            SceneStart: new(0x4F18, [0xAE, 0x00, 0x00, 0xD8, 0xE9, 0x00, 0x9F, 0x00, 0x00]),
-            Exit: new(Worker: 0x34, Jump: -1, CodeOffset: 0x4FBD, Expected: [0xAE, 0x00, 0x00, 0xD8, 0xBB, 0x00]),
-            MomentBelow: 9, MessageWindow: 3, HostWorker: 0x3C, MomentFrom: 8),
-        new("Dream Zanarkand highway, before the first battle", "Zanarkand", "znkd0801", SceneWorker: 0x45,
-            SceneStart: new(0x7327, [0xAE, 0x00, 0x00, 0xD8, 0xE9, 0x00, 0x9F, 0x00, 0x00]),
-            Exit: new(Worker: 0x46, Jump: -1, CodeOffset: 0x7D6E, Expected: [0xAE, 0x1D, 0x00, 0xAE, 0x22, 0x00]),
-            MomentBelow: 15, MessageWindow: 3, HostWorker: 0x4E, MomentFrom: 14),
-        new("Dream Zanarkand, before the Sinspawn battle", "Zanarkand", "znkd0900", SceneWorker: 0x38,
-            SceneStart: new(0x48B0, [0xAE, 0x00, 0x00, 0xD8, 0xE9, 0x00, 0x9F, 0x00, 0x00]),
-            Exit: new(Worker: 0x39, Jump: -1, CodeOffset: 0x4D92, Expected: [0xAE, 0x0A, 0x00, 0xAE, 0x10, 0x00]),
-            MomentBelow: 17, MessageWindow: 3, HostWorker: 0x41, MomentFrom: 16),
+        // Found by `ffxr cutscenes find`, checked by SceneAudit and played through in-game. MomentFrom..MomentBelow keeps
+        // late-game revisits vanilla.
         // CSR2 removes 1AAF6-1AED0 here; the skip lands at the same exit tail.
         new("Zanarkand stadium (opening)", "Zanarkand", "znkd1300", SceneWorker: 0x2B,
             SceneStart: new(0x1AAED, [0xD8, 0x5F, 0x00, 0xAE, 0x00, 0x00, 0xD8, 0x56, 0x00]),
             Exit: new(Worker: 0x2B, Jump: -1, CodeOffset: 0x1AEB2, Expected: [0xF6, 0x02, 0x00, 0xAE, 0x05, 0x00]),
             MomentBelow: 6, MessageWindow: 3, HostWorker: 0x25),
-        // CSR2 removes 1B29-1C43 and 1CFC-1FCF and warps on; w09 runs at level 5, so the skip runs at 6.
-        new("Besaid valley (with Wakka)", "Besaid", "bsil0300", SceneWorker: 0x11,
-            SceneStart: new(0x3395, [0xD8, 0x5E, 0x00, 0xAE, 0x00, 0x00, 0xD8, 0x56, 0x00]),
-            Exit: new(Worker: 0x09, Jump: -1, CodeOffset: 0x1FCF, Expected: [0xAE, 0x7C, 0x00, 0xA0, 0x00, 0x00]),
-            MomentBelow: 124, MessageWindow: 3, HostWorker: 0x15, SkipLevel: 6),
         new("Besaid promontory (first visit)", "Besaid", "bsil0600", SceneWorker: 0x0A,
             SceneStart: new(0x3DAD, [0x9F, 0x00, 0x00, 0x2C, 0xB0, 0x06, 0x00, 0xD8, 0x5E]),
             Exit: new(Worker: 0x0A, Jump: -1, CodeOffset: 0x3EA6, Expected: [0xAE, 0x00, 0x00, 0xAE, 0x06, 0x00]),
             MomentBelow: 125, MessageWindow: 3, HostWorker: 0x10, MomentFrom: 124),
-        // CSR2 removes 264D-289A and places the player; the skip replays GameMoment = 128 and the player's walk target.
-        new("Besaid village slope", "Besaid", "bsil0700", SceneWorker: 0x0B,
-            SceneStart: new(0x2643, [0x9F, 0x00, 0x00, 0xAE, 0x7E, 0x00, 0x06, 0xD7, 0x07]),
-            Exit: new(Worker: 0x0B, Jump: -1, CodeOffset: 0x28B7, Expected: [0xAE, 0x0F, 0x00, 0xD8, 0x04, 0x40]),
-            MomentBelow: 127, MessageWindow: 3, HostWorker: 0x15, MomentFrom: 126, SkipLevel: 4, StaysInRoom: true),
-        new("Besaid temple (GameMoment 162)", "Besaid", "bsyt0100", SceneWorker: 0x31,
-            SceneStart: new(0xDE5C, [0xD8, 0x5F, 0x00, 0xD8, 0x5E, 0x00, 0xAE, 0x01, 0x00]),
-            Exit: new(Worker: 0x1E, Jump: -1, CodeOffset: 0x5B47, Expected: [0xAE, 0x12, 0x00, 0xAE, 0x15, 0x00]),
-            MomentBelow: 163, MessageWindow: 3, HostWorker: 0x39),
-        new("Besaid temple (GameMoment 164)", "Besaid", "bsyt0500", SceneWorker: 0x1B,
-            SceneStart: new(0x1FFA, [0x9F, 0x00, 0x00, 0x2C, 0xB0, 0x00, 0x00, 0xD8, 0x5E]),
-            Exit: new(Worker: 0x1B, Jump: -1, CodeOffset: 0x2462, Expected: [0xD8, 0x0B, 0xB0, 0xAE, 0x01, 0x00]),
-            MomentBelow: 165, MessageWindow: 3, HostWorker: 0x1D, MomentFrom: 164),
         new("Besaid village (GameMoment 184)", "Besaid", "bsvr0300", SceneWorker: 0x10,
             SceneStart: new(0x1E59, [0x9F, 0x00, 0x00, 0x2C, 0xB0, 0x00, 0x00, 0xD8, 0x5E]),
             Exit: new(Worker: 0x10, Jump: -1, CodeOffset: 0x1EC7, Expected: [0xAE, 0x3C, 0x00, 0xD8, 0x00, 0x00]),
@@ -180,6 +151,7 @@ public static class Cutscenes
         var tables = new ScriptTables(originalChunk);
 
         var plans = new List<(SkippableScene Scene, int Function, int ExitJump, IReadOnlyList<SkippedStatement> Replay)>();
+        if (RelayoutRisk(script) is { } risk && !VerifiedInGame.Contains(scenes[0].EventId)) throw new UnsafeSkipException(scenes[0], risk);
         foreach (var scene in scenes)
         {
             Check(script, tables, scene);
@@ -242,6 +214,25 @@ public static class Cutscenes
 
     /// <summary>The guard with the scene's own exit label (scenes whose exit is an existing label).</summary>
     public static byte[] Guard(SkippableScene scene) => Guard(scene, scene.Exit.Jump);
+
+    /// <summary>Events whose skip has been played through with the edit in place, so the re-layout gate trusts them.</summary>
+    public static readonly IReadOnlySet<string> VerifiedInGame = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { "znkd0600", "znkd1300", "bsil0600", "bsvr0300", "bsmm0000", "bsvr0000" };
+
+    /// <summary>
+    /// Why editing an event might break its layout, or null. Any edit moves the data after the code, and the game reads
+    /// some of it through pointers: those the editor knows move along, but bsil0300 crashed on load after every edit
+    /// until its meta struct's +0x20 (a pointer in 25 events, which FFXDataParser reads as a plain value) moved too.
+    /// Events with that pointer, or with other words that look like untracked pointers, aren't edited until one has been
+    /// played through.
+    /// </summary>
+    public static string? RelayoutRisk(EventScriptEditor script)
+    {
+        if (script.MetaPointer20 != 0) return "its meta struct has the +0x20 pointer, which no in-game test has covered yet";
+        var candidates = script.UntrackedPointerCandidates();
+        return candidates.Count == 0 ? null
+            : $"{candidates.Count} word(s) after the code look like pointers the editor doesn't move (e.g. {candidates[0].Field:X} -> {candidates[0].Value:X})";
+    }
 
     private static void Check(EventScriptEditor script, ScriptTables tables, SkippableScene scene)
     {

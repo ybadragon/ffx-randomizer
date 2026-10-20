@@ -12,10 +12,13 @@ namespace FfxRandomizer.Tests;
 /// <summary>Soft reset. Reads the installed game (read-only) and passes trivially without it.</summary>
 public class SoftResetTests
 {
+    // Soft reset isn't released; these tests switch it on.
+    public SoftResetTests() => SoftResetFeature.Available = true;
+
     private static readonly Lazy<VbfArchive?> Original = new(() =>
         GameInstall.FindSteamInstall() is { } game ? new PatchManager(game.DataArchivePath, AppPaths.Default).OpenOriginal() : null);
 
-    /// <summary>The default combo, L3 + R3.</summary>
+    /// <summary>The default combo, L1 + R1 + Start.</summary>
     private static readonly int[] Default = SoftReset.ComboIndexes(null);
 
     private static RandomizerSettings Settings(params string[] options)
@@ -100,8 +103,8 @@ public class SoftResetTests
     }
 
     [Theory]
-    [InlineData("l3+r3", new[] { 9, 10 })] // the default
-    [InlineData("l1+r1+start", new[] { 2, 3, 11 })]
+    [InlineData("select+l2+r2", new[] { 8, 0, 1 })]
+    [InlineData("l1+r1+start", new[] { 2, 3, 11 })] // the default
     [InlineData("select", new[] { 8 })]
     public void The_watcher_waits_a_second_on_the_combo_then_goes_to_the_title(string combo, int[] buttons)
     {
@@ -122,18 +125,18 @@ public class SoftResetTests
     public void A_recorded_combo_is_kept_and_odd_ones_fall_back_to_the_default()
     {
         // Any 1-3 different buttons, written in the skip list's order.
-        Assert.Equal("select+r1+l3", SoftReset.ComboId([SkipButtons.ById("l3"), SkipButtons.ById("select"), SkipButtons.ById("r1")]));
-        Assert.True(SoftReset.IsCombo("select+r1+l3"));
+        Assert.Equal("select+r1+start", SoftReset.ComboId([SkipButtons.ById("start"), SkipButtons.ById("select"), SkipButtons.ById("r1")]));
+        Assert.True(SoftReset.IsCombo("select+r1+start"));
         Assert.False(SoftReset.IsCombo("r1+select")); // not in order
         Assert.False(SoftReset.IsCombo("l1+r1+l2+r2")); // four
         Assert.False(SoftReset.IsCombo("l1+l1"));
         Assert.False(SoftReset.IsCombo("dpad"));
 
-        var settings = Settings("softreset", "softresetbuttons=select+r1+l3");
-        Assert.Equal("select+r1+l3", SoftResetFeature.Combo(settings));
-        Assert.Equal([8, 3, 9], SoftResetFeature.Buttons(settings));
-        Assert.Equal("l3+r3", SoftResetFeature.Combo(Settings("softreset", "softresetbuttons=nonsense")));
-        Assert.Equal([9, 10], SoftResetFeature.Buttons(Settings("softreset")));
+        var settings = Settings("softreset", "softresetbuttons=select+r1+start");
+        Assert.Equal("select+r1+start", SoftResetFeature.Combo(settings));
+        Assert.Equal([8, 3, 11], SoftResetFeature.Buttons(settings));
+        Assert.Equal("l1+r1+start", SoftResetFeature.Combo(Settings("softreset", "softresetbuttons=nonsense")));
+        Assert.Equal([2, 3, 11], SoftResetFeature.Buttons(Settings("softreset")));
     }
 
     [Fact]
@@ -141,14 +144,16 @@ public class SoftResetTests
     {
         Assert.NotNull(SoftReset.OverlapWarning("l1+r1+start", Cutscenes.Hold, SkipButtons.ById("r1")));
         Assert.Null(SoftReset.OverlapWarning("l1+r1+start", Cutscenes.Always, SkipButtons.ById("r1")));
-        Assert.Null(SoftReset.OverlapWarning("l3+r3", Cutscenes.Hold, SkipButtons.Default));
+        Assert.Null(SoftReset.OverlapWarning("l1+r1+start", Cutscenes.Hold, SkipButtons.Default));
     }
 
     [Fact]
-    public void Stick_clicks_are_L3_and_R3()
+    public void Stick_clicks_are_not_offered()
     {
-        Assert.Equal(9, SkipButtons.FromXbox("LeftThumb")!.Index);
-        Assert.Equal(10, SkipButtons.FromXbox("RightThumb")!.Index);
+        // Never seen held on PC (as buttons 9 and 10).
+        Assert.Null(SkipButtons.FromXbox("LeftThumb"));
+        Assert.Null(SkipButtons.FromXbox("RightThumb"));
+        Assert.DoesNotContain(SkipButtons.All, b => b.Index is 9 or 10);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using FfxRandomizer.Core.GameData;
 using FfxRandomizer.Core.GameData.Events;
+using FfxRandomizer.Core.Randomization.Features;
 
 namespace FfxRandomizer.Core.Randomization;
 
@@ -177,20 +178,8 @@ public static class OptionCatalog
                         Warnings: SkipButtons.All.Where(b => b.AdvancesDialogue).ToDictionary(b => b.Id,
                             b => $"{b.Label} also advances dialogue, so holding it may skip lines before the scene skips.")),
                 },
-            Toggle("softreset", "Soft reset: hold a button combo to return to the title screen",
-                "Holding the combo for about a second fades to black and goes back to the title screen, as after a game over. Works in the field (almost every area, cutscenes included), not in battles or menus. Your last save is untouched.",
-                badge: "Experimental", implemented: true,
-                warning: "Experimental: works in some areas in-game so far. A few areas don't have it (`ffxr softreset plan` lists them).")
-                with
-                {
-                    Dropdown = new OptionDropdown("softresetbuttons", "Combo",
-                        [.. SoftReset.Combos.Select(c => new Choice(c, SoftReset.ComboLabel(c)))],
-                        ShownFor: new HashSet<string>(),
-                        Hint: "Hold all of them together. Use Record to hold up to three buttons on your controller instead. L3 and R3 (stick clicks) still need checking in-game.")
-                    {
-                        LabelOf = id => SoftReset.IsCombo(id) ? SoftReset.ComboLabel(id) : null,
-                    },
-                },
+            // Soft reset isn't released (see SoftResetFeature.Available); the box only shows in development builds.
+            .. (SoftResetFeature.Available ? new[] { SoftResetFeature.Group } : []),
         ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
         [
