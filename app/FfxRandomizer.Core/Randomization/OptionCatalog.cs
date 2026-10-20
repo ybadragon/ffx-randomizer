@@ -164,8 +164,8 @@ public static class OptionCatalog
         new("story", "Story", "How the story plays out.",
         [
             Pick("cutscenes", "Skip cutscenes",
-                "Covers Dream Zanarkand (the opening campfire, the stadium, the highway and the Sinspawn battle lead-ins) and 9 Besaid scenes so far. With Hold button to skip (recommended), a prompt fills while you hold the skip button during the scene; after about a second the scene ends and the story moves on (for a scene that leaves you in the same place, such as the Besaid village slope, hold the button as it starts). Later visits to these places play as usual.",
-                "Experimental: only the opening scene has been played through; the others pass the static safety checks but are untested in-game. If a skip ever leaves you stuck, use Restore original.",
+                "Covers 38 scenes that end by moving you to another area: the Dream Zanarkand opening, Besaid, and scenes across the game (Kilika, Luca, Mushroom Rock, the Moonflow, Guadosalam, the Thunder Plains, Macalania, the airship, Mt. Gagazet, Zanarkand). With Hold button to skip (recommended), a prompt fills while you hold the skip button during the scene; after about a second the scene ends and the story moves on. Later visits to these places play as usual.",
+                "Experimental: 7 of these scenes have been played through; the rest pass the static safety checks but are untested in-game. If a room crashes or a skip leaves you stuck, set Skip cutscenes to Original and randomize again.",
                 new(Cutscenes.Original, "Original"), new(Cutscenes.Hold, "Hold button to skip"), new(Cutscenes.Always, "Always skip"))
                 with
                 {

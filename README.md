@@ -38,8 +38,7 @@ Everything FFXRando can randomize, plus Blitzball:
 | Aeons | Base stats, stat growth, power-up items |
 | Sphere Grid | Shuffle, controlled or fully random contents, empty or full grid, node strength, remove lock nodes |
 | Blitzball | Player stats, shuffled between players or randomized (Tidus and Wakka only if you ask) |
-| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers Dream Zanarkand (the campfire, stadium, highway and Sinspawn scenes) and 9 Besaid scenes so far; later visits play as usual |
-| Story (experimental) | Soft reset: hold a button combo (L3 + R3 by default, or pick or record up to three buttons) for about a second in the field to fade out and return to the title screen, cutscenes included (not in battles or menus). In 299 of the 324 areas |
+| Story (experimental) | Skip cutscenes: hold the skip button during a scene (a prompt fills over about a second) or always skip. The skip button is yours to pick, or record it from a controller. Covers 38 scenes that end by moving you to another area: the Dream Zanarkand opening, Besaid, Kilika, Luca, Mushroom Rock, the Moonflow, Guadosalam, the Thunder Plains, Macalania, the airship, Mt. Gagazet and Zanarkand; later visits play as usual. Experimental: if a room crashes, set Skip cutscenes to Original and randomize again |
 
 **Keep things sane** (on by default) keeps the game playable:
 - Random values stay within sensible limits.
@@ -108,7 +107,9 @@ ffxr save delete --slot N
 ffxr cutscenes find --area znkd,bsil [--emit] # cutscenes found in events, their skip-safety audit and what was left out
 ffxr cutscenes audit [--area <prefix>]       # the skip-safety audit of every scene "Skip cutscenes" covers
 ffxr cutscenes saves --from <file> (--slots A-B | --out <folder>)  # a save just before each covered scene
-ffxr softreset plan                          # which areas get the soft reset (and why the rest don't), apply time and size
+ffxr cutscenes generic [--emit <file>]       # every scene that can be skipped as it is, game-wide, and why the rest are left out
+ffxr cutscenes check [hold|always]           # the randomizer's checks on the cutscene edits (in memory)
+ffxr softreset plan                          # soft reset (unreleased; FFXR_SOFTRESET=1): which areas would get it
 ```
 
 An option is a toggle id (`rewards`), a choice (`gridmode=shuffle`) or, for `crosscheck`, `-id` to switch a default off (`-sane`).
