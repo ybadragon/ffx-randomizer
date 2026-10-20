@@ -22,7 +22,10 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         var button = Button(context.Settings);
         foreach (var scenes in Cutscenes.ByEvent)
         {
-            foreach (var (path, bytes) in Cutscenes.Build(context.Original, [.. scenes], mode, button)) context.Replace(path, bytes);
+            // On the files as the features before it left them (an event may hold Blitzball tables).
+            var read = (string path) => context.ChangedFiles.TryGetValue(path, out byte[]? edited) ? edited
+                : context.Original.IndexOf(path) >= 0 ? context.Original.ReadFile(path) : null;
+            foreach (var (path, bytes) in Cutscenes.Build(read, [.. scenes], mode, button)) context.Replace(path, bytes);
             foreach (var scene in scenes)
                 context.Spoil(Section, new
                 {
@@ -44,7 +47,8 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
             // The skip-safety audit, run again here so no edit ships with something it would wrongly bypass.
             foreach (var s in scenes)
                 foreach (string problem in Cutscenes.AuditOf(context.Original, s).Problems()) yield return $"{s.Name}: {problem}";
-            var expected = Cutscenes.Build(context.Original, [.. scenes], mode, button);
+            // Rebuilt from the files as Blitzball (which runs before) left them.
+            var expected = Cutscenes.Build(BlitzballStatsFeature.ReadAsLeft(context), [.. scenes], mode, button);
             foreach (var (path, bytes) in expected)
             {
                 if (!context.ChangedFiles.TryGetValue(path, out byte[]? written))
@@ -60,7 +64,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 if (!written.AsSpan().SequenceEqual(final))
                     yield return $"{scene.Name}: {path} isn't what the edit produces (another feature changed it?).";
                 bool isEvent = path.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase);
-                var problems = isEvent ? CheckEvent(original, bytes, mode) : CheckText(original, written, Cutscenes.PromptCount);
+                var problems = isEvent ? CheckEvent(BlitzballStatsFeature.AsLeft(context, path), bytes, mode) : CheckText(original, written, Cutscenes.PromptCount);
                 foreach (string problem in problems) yield return $"{scene.Name}: {path}: {problem}";
             }
         }

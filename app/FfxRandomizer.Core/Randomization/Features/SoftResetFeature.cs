@@ -72,9 +72,6 @@ public sealed class SoftResetFeature : IRandomizerFeature
     {
         int covered = 0;
         var buttons = Buttons(context.Settings);
-        var blitzCopies = new BlitzballStatsFeature().IsEnabled(context.Settings)
-            ? BlitzballStats.FindCopies(context.Original).ToDictionary(c => c.Path, StringComparer.OrdinalIgnoreCase)
-            : [];
         var cutsceneEvents = new CutsceneSkipFeature().IsEnabled(context.Settings)
             ? Cutscenes.ByEvent.ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase)
             : [];
@@ -84,16 +81,11 @@ public sealed class SoftResetFeature : IRandomizerFeature
             byte[] original = context.Original.ReadFile(path);
             byte[] written = context.ChangedFiles.TryGetValue(path, out byte[]? w) ? w : original;
 
-            // What the earlier features made of this event (they check their own edits): the original, the cutscene
-            // skip's build, or the original with the Blitzball tables found in the written file.
-            byte[] before = original;
+            // What the earlier features made of this event (they check their own edits): the original, or the cutscene
+            // skip's build on top of the Blitzball tables found in the written file.
+            byte[] before = BlitzballStatsFeature.AsLeft(context, path);
             if (cutsceneEvents.TryGetValue(id, out var scenes))
-                before = Cutscenes.Build(context.Original, scenes, CutsceneSkipFeature.Mode(context.Settings), CutsceneSkipFeature.Button(context.Settings))[path];
-            if (blitzCopies.TryGetValue(path, out var copy))
-            {
-                before = (byte[])original.Clone();
-                BlitzballStats.FromCopy(written, copy.In(original, written)).WriteTo(before, copy);
-            }
+                before = Cutscenes.Build(BlitzballStatsFeature.ReadAsLeft(context), scenes, CutsceneSkipFeature.Mode(context.Settings), CutsceneSkipFeature.Button(context.Settings))[path];
 
             byte[] expected = SoftReset.WithWatcher(path, before, buttons);
             if (!written.AsSpan().SequenceEqual(expected))

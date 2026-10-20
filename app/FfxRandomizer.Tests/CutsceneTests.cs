@@ -78,6 +78,27 @@ public class CutsceneTests
         Assert.Throws<UnsafeSkipException>(() => Cutscenes.Build(original, scene, Cutscenes.Always, SkipButtons.Default));
     }
 
+    [Fact]
+    public void A_skippable_scene_in_an_event_with_Blitzball_tables_keeps_the_randomized_tables()
+    {
+        if (Original.Value is not { } original) return;
+
+        var settings = Settings("hold");
+        settings.Choices["blitz"] = "random";
+        var result = RandomizerEngine.Run(original, settings, new Seed("blitz and cutscenes"));
+        Assert.Empty(result.Problems);
+        // hiku1900 (Airship - Bridge) holds the tables and gets a skip: the skip's code moves them, and they stay randomized.
+        var copy = BlitzballStats.FindCopies(original).Single(c => c.Path == Cutscenes.EventPath("hiku1900"));
+        Assert.Contains(Cutscenes.All, s => s.EventId == "hiku1900");
+        byte[] written = result.Files[copy.Path];
+        Assert.NotEqual(original.ReadFile(copy.Path).Length, written.Length);
+        var tables = BlitzballStats.FromCopy(written, copy.In(original.ReadFile(copy.Path), written));
+        var reference = BlitzballStats.FindCopies(original).Single(c => c.Path == BlitzballStats.EventPath(BlitzballStats.ReferenceEvent));
+        var randomized = BlitzballStats.FromCopy(result.Files[reference.Path], reference.In(original.ReadFile(reference.Path), result.Files[reference.Path]));
+        Assert.All(Enum.GetValues<BlitzStat>(), stat => Assert.Equal(randomized.Encode(stat), tables.Encode(stat)));
+        Assert.NotEqual(BlitzballStats.Read(original).Encode(BlitzStat.HP), tables.Encode(BlitzStat.HP));
+    }
+
     [Theory]
     [InlineData("bsil0300")] // meta +0x20 pointer
     [InlineData("znkd0801")] // a word that looks like an untracked pointer

@@ -48,7 +48,7 @@ public sealed record SkippableScene(
 /// The scenes "Skip cutscenes" covers, and how their files are edited. Jumping from a scene's start to its exit comes from
 /// CSR2, the Fahrenheit cutscene remover (MIT, The Fahrenheit contributors, https://github.com/fahrenheit-crew/fh-mods-csr).
 /// </summary>
-public static class Cutscenes
+public static partial class Cutscenes
 {
     public const string Original = "orig", Hold = "hold", Always = "always";
 
@@ -70,7 +70,13 @@ public static class Cutscenes
     /// <summary>The {TIME:00} text control code the game's own button prompts start with: show the whole text at once.</summary>
     private static readonly byte[] ShowInstantly = [0x09, 0x30];
 
-    public static IReadOnlyList<SkippableScene> All { get; } =
+    /// <summary>Every scene the option covers: those played through in-game, then the generic ones (Cutscenes.Generic.cs).</summary>
+    public static IReadOnlyList<SkippableScene> All => _all ??= [.. Confirmed, .. Generic];
+
+    private static IReadOnlyList<SkippableScene>? _all;
+
+    /// <summary>Scenes whose skip has been played through in-game.</summary>
+    private static IReadOnlyList<SkippableScene> Confirmed { get; } =
     [
         // znkd0600: w0D::f02 plays the campfire scene on the first visit (GameMoment < 2) and the late-game return (2700).
         // Its first-visit exit j13 hides the title card, sets GameMoment = 2 and warps to the Zanarkand harbor.
@@ -459,9 +465,12 @@ public static class Cutscenes
             if (read(path) is not { } text) continue;
             tables.Add((FfxCharset.CharsetFor(folder[4..6]), () => text, bytes => files[path] = bytes));
         }
-        tables.Add(("jp", () => ebp.Chunk(EventFile.JapaneseTextChunk)!, bytes => ebp.SetChunk(EventFile.JapaneseTextChunk, bytes)));
-        tables.Add(("us", () => ebp.Chunk(EventFile.EnglishTextChunk)!, bytes => ebp.SetChunk(EventFile.EnglishTextChunk, bytes)));
+        // The event file's own Japanese and English text, where it has them (some events have fewer chunks).
+        foreach (var (charsetId, chunk) in new[] { ("jp", EventFile.JapaneseTextChunk), ("us", EventFile.EnglishTextChunk) })
+            if (chunk < ebp.ChunkCount && ebp.Chunk(chunk) is { Length: > 0 })
+                tables.Add((charsetId, () => ebp.Chunk(chunk)!, bytes => ebp.SetChunk(chunk, bytes)));
 
+        if (tables.Count == 0) throw new InvalidOperationException($"{eventId} has no text to show the hold-to-skip prompt in.");
         var counts = tables.Select(t => EventText.Count(t.Read())).ToList();
         int first = counts.Max();
         var charsets = new Dictionary<string, FfxCharset>();
