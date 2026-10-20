@@ -32,8 +32,8 @@ internal static partial class CrossCheck
             // Each scene's first-visit guard (both bounds when it has a lower one), wherever the mode puts it.
             foreach (var scene in group)
                 foreach (string bound in scene.MomentFrom > 0
-                    ? new[] { $"GameMoment >= {scene.MomentFrom} [{scene.MomentFrom:X2}h]", $"GameMoment < {scene.MomentBelow} [{scene.MomentBelow:X2}h]" }
-                    : [$"GameMoment < {scene.MomentBelow} [{scene.MomentBelow:X2}h]"])
+                    ? new[] { $"GameMoment >= {scene.MomentFrom} [{Hex(scene.MomentFrom)}h]", $"GameMoment < {scene.MomentBelow} [{Hex(scene.MomentBelow)}h]" }
+                    : [$"GameMoment < {scene.MomentBelow} [{Hex(scene.MomentBelow)}h]"])
                     if (!ours.Contains(bound, StringComparison.Ordinal)) yield return $"{eventId} {scene.Name}: no \"{bound}\" in the inserted code";
             if (mode != Cutscenes.Hold) continue;
 
@@ -178,6 +178,9 @@ internal static partial class CrossCheck
         .Select(l => JumpTarget().Replace(l, ""))
         .Select(l => PrivateAddress().Replace(l, "priv"))
         .Where(l => l.Length > 0);
+
+    /// <summary>A constant's hex as the parser prints it: two digits, or four from 0x100.</summary>
+    private static string Hex(int value) => value > 0xFF ? $"{value:X4}" : $"{value:X2}";
 
     private static int? CodeOffset(string line) =>
         line.IndexOf(' ') is int space and (4 or 5) && int.TryParse(line[..space], System.Globalization.NumberStyles.HexNumber, null, out int at) ? at : null;
