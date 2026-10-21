@@ -42,9 +42,10 @@ internal static partial class CrossCheck
                 yield return $"{id}: the parser printed no listing";
                 continue;
             }
-            // Randomized Blitzball tables show up in the variables' values; the Blitzball comparison checks those.
+            // Randomized Blitzball tables show up in their declarations' values (code that reads them is still compared); the
+            // Blitzball comparison checks the tables.
             var (ours, problems, _, _) = CompareListing(original, files, id, "softreset", v, p,
-                blitzball ? l => l.Contains("BlitzballStatGrowthTable", StringComparison.Ordinal) : null);
+                blitzball ? l => BlitzballTableDeclaration().IsMatch(l) : null);
             foreach (string problem in problems) yield return problem;
             var lines = ours.Split('\n');
             if (!lines.Any(l => MainLabel().IsMatch(l) && l.Contains("call Common.wait [0000h](frames=2 [02h])", StringComparison.Ordinal)))

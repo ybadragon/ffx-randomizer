@@ -24,9 +24,10 @@ internal static partial class CrossCheck
         foreach (var group in Cutscenes.ByEvent)
         {
             string eventId = group.Key;
-            // Randomized Blitzball tables show up in the variables' values; the Blitzball comparison checks those.
+            // Randomized Blitzball tables show up in their declarations' values (code that reads them is still compared); the
+            // Blitzball comparison checks the tables.
             var (ours, listingProblems, lines, changes) = CompareListing(original, files, eventId, mode,
-                ignore: blitzball ? l => l.Contains("BlitzballStatGrowthTable", StringComparison.Ordinal) : null);
+                ignore: blitzball ? l => BlitzballTableDeclaration().IsMatch(l) : null);
             foreach (string p in listingProblems) yield return p;
             // Worker numbers as they are in the edited event (the soft reset may have added a worker before them).
             int W(int worker) => Renumbered(original, eventId, files[Cutscenes.EventPath(eventId)], worker);
@@ -179,6 +180,7 @@ internal static partial class CrossCheck
         .Select(l => EventLabel().Replace(l, "").Replace(" ", ""))
         .Select(l => JumpTarget().Replace(l, ""))
         .Select(l => PrivateAddress().Replace(l, "priv"))
+        .Select(l => TreasureContents().Replace(l, ""))
         .Where(l => l.Length > 0);
 
     /// <summary>A constant's hex as the parser prints it: two digits, or four from 0x100.</summary>
@@ -200,6 +202,18 @@ internal static partial class CrossCheck
     /// </summary>
     [GeneratedRegex(@"&?priv[0-9A-F]{4,}|(?<=privateDataaddr=)[0-9A-F]+|(?<=^w[0-9A-F]{2}:\{.*)(Functions|Jumps)=\d+\[[0-9A-F]+h\]")]
     private static partial Regex PrivateAddress();
+
+    /// <summary>
+    /// What the parser shows for a treasure argument (its index, the last bracket) as read from the treasure table, which
+    /// other options randomize; the treasure comparison checks the table. The argument is the call's last, and gear text can
+    /// hold parentheses ("Formula=MAG (ignore MDF)"), so it runs to the index at the end of the line.
+    /// </summary>
+    [GeneratedRegex(@"(?<=treasure=).*(?=\[[0-9A-F]+h\]\);\s*$)")]
+    private static partial Regex TreasureContents();
+
+    /// <summary>A Blitzball stat table's declaration, which lists the table's values ("Variable 12: BlitzballStatGrowthTable_HP { ...").</summary>
+    [GeneratedRegex(@"^\s*Variable \w+: BlitzballStatGrowthTable_")]
+    private static partial Regex BlitzballTableDeclaration();
 
     [GeneratedRegex(@"controllerButtonPressed1\? \[004Ch\]\(controllerButton=[^\[]*\[([0-9A-F]{2})h\]\)")]
     private static partial Regex DownTest();
