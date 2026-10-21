@@ -22,6 +22,7 @@ public static class EventText
         {
             headers[i] = BinaryPrimitives.ReadUInt32LittleEndian(table[(i * 4)..]);
             int offset = (int)(headers[i] & 0xFFFF);
+            if (offset == 0) continue; // an empty slot (some Japanese tables have them)
             int terminator = table[offset..].IndexOf((byte)0);
             if (terminator < 0) throw new InvalidDataException("A string in the event text runs off the end of the table.");
             dataEnd = Math.Max(dataEnd, offset + terminator + 1);
@@ -31,6 +32,11 @@ public static class EventText
         int shift = added * 8;
         foreach (uint header in headers)
         {
+            if ((header & 0xFFFF) == 0)
+            {
+                Write32(output, header);
+                continue;
+            }
             uint offset = (header & 0xFFFF) + (uint)shift;
             if (offset > 0xFFFF) throw new InvalidOperationException("The event text is too long to add strings to.");
             Write32(output, (header & 0xFFFF0000) | offset);

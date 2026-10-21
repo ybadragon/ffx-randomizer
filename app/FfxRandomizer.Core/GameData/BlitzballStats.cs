@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using FfxRandomizer.Core.GameData.Events;
 using FfxRandomizer.Core.Vbf;
 
 namespace FfxRandomizer.Core.GameData;
@@ -176,5 +177,25 @@ public sealed class BlitzballStats
 }
 
 /// <summary>One event file's copy of the stat tables: the file offset of each table.</summary>
-public sealed record BlitzballCopy(string Path, IReadOnlyDictionary<BlitzStat, int> Offsets);
+public sealed record BlitzballCopy(string Path, IReadOnlyDictionary<BlitzStat, int> Offsets)
+{
+    /// <summary>
+    /// Where the tables sit in an edited version of the event (as soft reset leaves it, with code added before them):
+    /// they are shared data, which moves as one block after the code.
+    /// </summary>
+    public BlitzballCopy In(byte[] originalEbp, byte[] editedEbp)
+    {
+        if (originalEbp.Length == editedEbp.Length) return this;
+        var before = new EventScriptEditor(EventFile.Read(originalEbp).Chunk(EventFile.ScriptChunk)!);
+        var after = new EventScriptEditor(EventFile.Read(editedEbp).Chunk(EventFile.ScriptChunk)!);
+        // Chunk 0 starts right after the file header, which edits don't change.
+        int chunkStart = EventFile.ScriptChunkStart(originalEbp);
+        if (EventFile.ScriptChunkStart(editedEbp) != chunkStart) throw new InvalidDataException($"{Path}: the script chunk moved.");
+        int delta = after.SharedDataStart - before.SharedDataStart;
+        foreach (int offset in Offsets.Values)
+            if (offset - chunkStart < before.SharedDataStart || offset - chunkStart + BlitzballStats.TableBytes > before.WorkerTablesStart)
+                throw new InvalidDataException($"{Path}: a Blitzball table at {offset:X} isn't in the shared data.");
+        return this with { Offsets = Offsets.ToDictionary(o => o.Key, o => o.Value + delta) };
+    }
+}
 

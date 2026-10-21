@@ -9,7 +9,8 @@ public sealed record SkipButton(string Id, int Index, string Label, string Name,
 /// <summary>
 /// The buttons offered for skipping, PlayStation names with their Xbox equivalent. Button numbers from FFXDataParser's
 /// controllerButton enum (ScriptConstants); icon codes from its text control code table (StringHelper.getControllerInput),
-/// where L2 and Start aren't known, so those show their name instead.
+/// where L2 and Start aren't known, so those show their name instead. Not the stick clicks: 9 and 10 (the gaps in the
+/// enum, where the PS2 pad has L3 and R3) were never seen held on PC.
 /// </summary>
 public static class SkipButtons
 {

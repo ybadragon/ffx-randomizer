@@ -40,6 +40,39 @@ public static class ControllerRecorder
         return null;
     }
 
+    /// <summary>
+    /// The buttons held together on one controller: recording starts with the first newly pressed button and ends when
+    /// they are all let go again; the result is the most held at once. Null when nothing is pressed before
+    /// <paramref name="timeout"/>.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>?> RecordComboAsync(TimeSpan timeout, CancellationToken cancel = default)
+    {
+        var held = new HashSet<string>[4];
+        for (int i = 0; i < 4; i++) held[i] = Pressed(i).ToHashSet();
+        var deadline = DateTime.UtcNow + timeout;
+        int user = -1;
+        var most = new HashSet<string>();
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(16, cancel);
+            if (user < 0)
+            {
+                for (int i = 0; i < 4 && user < 0; i++)
+                {
+                    var now = Pressed(i).ToHashSet();
+                    now.ExceptWith(held[i]);
+                    if (now.Count > 0) (user, most) = (i, now);
+                    held[i].IntersectWith(Pressed(i));
+                }
+                continue;
+            }
+            var pressed = Pressed(user).ToHashSet();
+            if (pressed.Count == 0) return [.. most];
+            if (pressed.Count > most.Count) most = pressed;
+        }
+        return user < 0 ? null : [.. most];
+    }
+
     private static IEnumerable<string> Pressed(int user)
     {
         if (Read(user) is not { } pad) yield break;

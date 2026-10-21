@@ -116,7 +116,7 @@ internal static partial class SaveCommands
     /// Room id ⇄ event name. The game keeps this mapping in code, not in its data files, so this dev tool reads it at run
     /// time from a local FFXDataParser checkout (FFXDATAPARSER_DIR) rather than carrying a copy.
     /// </summary>
-    private static partial class RoomTable
+    internal static partial class RoomTable
     {
         private static readonly Lazy<Dictionary<int, string>> Rooms = new(Load);
 

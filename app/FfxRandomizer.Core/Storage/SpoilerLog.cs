@@ -48,7 +48,7 @@ public static class SpoilerLog
             var parts = new List<string>();
             if (group.Choices.Count > 0) parts.Add(group.Choices.First(c => c.Id == settings.ChoiceOf(group)).Label);
             if (settings.DropdownApplies(group) && group.Dropdown is { } d)
-                parts.Add($"{d.Label.ToLowerInvariant()} {d.Choices.First(c => c.Id == settings.ChoiceOf(d)).Label}");
+                parts.Add($"{d.Label.ToLowerInvariant()} {d.LabelFor(settings.ChoiceOf(d))}");
             parts.AddRange(group.SubOptions.Where(s => settings.IsOn(s.Id)).Select(s => s.Label));
             yield return parts.Count == 0 ? group.Title : $"{group.Title}: {string.Join(", ", parts)}";
         }

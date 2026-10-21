@@ -38,18 +38,25 @@ public sealed class EventFile
         var starts = offsets.Take(offsets.Count - 1).ToList();
         int first = (int)starts.Where(s => s != 0).Min();
         var chunks = new List<byte[]?>();
-        foreach (uint start in starts)
+        for (int i = 0; i < starts.Count; i++)
         {
+            uint start = starts[i];
             if (start == 0)
             {
                 chunks.Add(null);
                 continue;
             }
-            uint end = offsets.Where(o => o > start).DefaultIfEmpty((uint)ebp.Length).Min();
+            // A chunk ends where the next present one starts, which may be where it starts too (an empty chunk, as
+            // slik1100's chunk 1 is); the table's last entry is the file's end.
+            uint end = offsets.Skip(i + 1).First(o => o != 0);
+            if (end < start || end > ebp.Length) throw new InvalidDataException("Event chunks are out of order.");
             chunks.Add(ebp[(int)start..(int)end]);
         }
         return new EventFile(ebp[..first], chunks);
     }
+
+    /// <summary>Where chunk 0, the script, starts in an event file.</summary>
+    public static int ScriptChunkStart(byte[] ebp) => (int)BinaryPrimitives.ReadUInt32LittleEndian(ebp.AsSpan(4));
 
     /// <summary>A chunk's bytes, including the zero padding up to the next chunk.</summary>
     public byte[]? Chunk(int index) => _chunks[index];

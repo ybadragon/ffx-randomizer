@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using FfxRandomizer.Core.GameData;
 using FfxRandomizer.Core.GameData.Events;
 using FfxRandomizer.Core.Randomization;
 
@@ -34,14 +35,22 @@ public sealed partial class SubOptionViewModel(SubOption option, Action changed)
     partial void OnIsOnChanged(bool value) => changed();
 }
 
-/// <summary>A feature box's second setting, picked from a list; for the skip button it can also be recorded from a controller.</summary>
+/// <summary>
+/// A feature box's second setting, picked from a list; the skip button can also be recorded from a controller, and the
+/// soft reset combo recorded as the buttons held together.
+/// </summary>
 public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action changed) : ObservableObject
 {
+    public const string SkipButtonId = "cutscenebutton", ResetComboId = "softresetbuttons";
+
     public string Id => dropdown.Id;
     public string Label => dropdown.Label;
     public string? Hint => dropdown.Hint;
-    public IReadOnlyList<Choice> Choices => dropdown.Choices;
-    public bool CanRecord => dropdown.Id == "cutscenebutton";
+
+    /// <summary>The listed choices, plus a recorded value that isn't one of them.</summary>
+    public System.Collections.ObjectModel.ObservableCollection<Choice> Choices { get; } = new(dropdown.Choices);
+
+    public bool CanRecord => dropdown.Id is SkipButtonId or ResetComboId;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Warning), nameof(HasWarning))]
@@ -51,8 +60,20 @@ public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action ch
     [ObservableProperty] private string? _recordStatus;
     [ObservableProperty] private bool _isRecording;
 
-    public string? Warning => dropdown.Warnings?.GetValueOrDefault(SelectedId);
+    /// <summary>A warning that depends on other settings (the soft reset combo holding the cutscene skip button).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Warning), nameof(HasWarning))]
+    private string? _contextWarning;
+
+    public string? Warning => dropdown.Warnings?.GetValueOrDefault(SelectedId) ?? ContextWarning;
     public bool HasWarning => Warning is not null;
+
+    /// <summary>Selects a value, adding it to the list first when it is a valid one the list doesn't have.</summary>
+    internal void Select(string id)
+    {
+        if (Choices.All(c => c.Id != id) && dropdown.LabelOf?.Invoke(id) is { } label) Choices.Add(new Choice(id, label));
+        SelectedId = id;
+    }
 
     internal bool Loading { get; set; }
 
@@ -72,6 +93,11 @@ public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action ch
             RecordStatus = "No controller found. Connect an Xbox-style controller (or turn on Steam Input) and try again, or pick from the list.";
             return;
         }
+        if (Id == ResetComboId)
+        {
+            await RecordComboAsync();
+            return;
+        }
         IsRecording = true;
         RecordStatus = "Press a button on your controller…";
         string? pressed = await ControllerRecorder.RecordAsync(TimeSpan.FromSeconds(5));
@@ -88,6 +114,33 @@ public sealed partial class DropdownViewModel(OptionDropdown dropdown, Action ch
         }
         SelectedId = button.Id;
         RecordStatus = $"Recorded {pressed}: {button.Label}.";
+    }
+
+    private async Task RecordComboAsync()
+    {
+        IsRecording = true;
+        RecordStatus = $"Hold up to {SoftReset.MaxComboButtons} buttons together on your controller, then let go…";
+        var held = await ControllerRecorder.RecordComboAsync(TimeSpan.FromSeconds(8));
+        IsRecording = false;
+        if (held is null)
+        {
+            RecordStatus = "No button pressed in 8 seconds. Try again, or pick from the list.";
+            return;
+        }
+        var buttons = held.Select(SkipButtons.FromXbox).ToList();
+        if (buttons.Any(b => b is null))
+        {
+            RecordStatus = $"{string.Join(" + ", held.Where(h => SkipButtons.FromXbox(h) is null))} can't be part of the combo. Use face buttons, shoulder buttons, triggers, Back or Start.";
+            return;
+        }
+        if (buttons.Count > SoftReset.MaxComboButtons)
+        {
+            RecordStatus = $"{buttons.Count} buttons held; the combo can have up to {SoftReset.MaxComboButtons}.";
+            return;
+        }
+        string combo = SoftReset.ComboId(buttons!);
+        Select(combo);
+        RecordStatus = $"Recorded {string.Join(" + ", held)}: {SoftReset.ComboLabel(combo)}.";
     }
 }
 
@@ -135,7 +188,12 @@ public sealed partial class GroupViewModel : ObservableObject
     public bool ShowWarning => ShowBody && Group.Warning is not null;
     public string? Warning => Group.Warning;
 
-    partial void OnIsOnChanged(bool value) => Changed();
+    partial void OnIsOnChanged(bool value)
+    {
+        // A toggled box's dropdown (the soft reset combo) shows while it is on.
+        if (Choices.Count == 0 && Dropdown is not null) Dropdown.IsVisible = value;
+        Changed();
+    }
 
     /// <summary>The box's second setting, if it has one (shown only for some choices).</summary>
     public DropdownViewModel? Dropdown { get; }
@@ -160,10 +218,11 @@ public sealed partial class GroupViewModel : ObservableObject
         if (Dropdown is not null && Group.Dropdown is { } d)
         {
             Dropdown.Loading = true;
-            Dropdown.SelectedId = settings.ChoiceOf(d);
+            Dropdown.Select(settings.ChoiceOf(d));
             Dropdown.RecordStatus = null;
             Dropdown.Loading = false;
-            Dropdown.ShowFor(Choices.FirstOrDefault(c => c.IsSelected)?.Id);
+            if (Choices.Count == 0) Dropdown.IsVisible = IsOn;
+            else Dropdown.ShowFor(Choices.FirstOrDefault(c => c.IsSelected)?.Id);
         }
         _loading = false;
     }

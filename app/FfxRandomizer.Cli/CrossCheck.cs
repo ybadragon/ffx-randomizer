@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using FfxRandomizer.Core.GameData;
+using FfxRandomizer.Core.GameData.Events;
 using FfxRandomizer.Core.Randomization;
 using FfxRandomizer.Core.Randomization.Features;
 using FfxRandomizer.Core.Vbf;
@@ -82,10 +83,16 @@ internal static partial class CrossCheck
                 {
                     byte[] guard = Cutscenes.Guard(Cutscenes.All[0]);
                     int codeStart = 0x40 + (int)BitConverter.ToUInt32(eventBytes, 0x40 + 0x30);
-                    int at = CutsceneSkipFeature.ChangedCode(original.ReadFile(cutscenePath), eventBytes).Inserted
+                    int at = CutsceneSkipFeature.ChangedCode(Baseline(original, Cutscenes.All[0].EventId, eventBytes).Bytes, eventBytes).Inserted
                         .Select(r => eventBytes.AsSpan(codeStart + r.Offset, r.Length).IndexOf(guard) is int i and >= 0 ? codeStart + r.Offset + i : -1)
                         .First(i => i >= 0);
                     eventBytes[at + 4] ^= 1;
+                }
+                // Soft reset: the title room (23 -> 22) in the first skippable scene's event that has the watcher (always disassembled).
+                if (Cutscenes.ByEvent.Select(g => Cutscenes.EventPath(g.Key)).FirstOrDefault(p => copy.TryGetValue(p, out byte[]? b) && SoftResetFeature.HasWatcher(b, SoftResetFeature.Buttons(result.Settings))) is { } resetPath)
+                {
+                    byte[] call = Atel.Call(SoftReset.TransitionToRoom, SoftReset.TitleRoom, SoftReset.TitleSpawn);
+                    copy[resetPath][copy[resetPath].AsSpan().LastIndexOf(call) + 1] ^= 1;
                 }
                 files = copy;
             }
@@ -174,17 +181,22 @@ internal static partial class CrossCheck
                 var (stdout, errors) = RunParser(files, "READ_BLITZBALL_STATS");
                 problems.AddRange(errors.Select(e => $"parser error: {e}"));
                 problems.AddRange(CompareBlitzball(result.Files, blitzball, stdout));
+                problems.AddRange(CompareBlitzballCopies(original, files, out int copies));
                 checkedAreas.Add($"{blitzball.Count} Blitzball players");
+                checkedAreas.Add($"{copies} Blitzball table copies");
             }
             if (result.Spoiler[CutsceneSkipFeature.Section] is JsonArray scenes)
             {
-                problems.AddRange(CompareCutscenes(original, result.Settings, files));
+                problems.AddRange(CompareCutscenes(original, result.Settings, files, result.Spoiler[BlitzballStatsFeature.Section] is not null));
                 checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
+            if (result.Spoiler[SoftResetFeature.Section] is not null)
+                problems.AddRange(CompareSoftReset(original, seed, files, checkedAreas, result.Spoiler[BlitzballStatsFeature.Section] is not null, result.Spoiler[SoftResetFeature.Section], SoftResetFeature.Buttons(result.Settings)));
             Console.WriteLine(problems.Count == 0
                 ? $"seed {seed}: OK ({result.Files.Count} files; {string.Join(", ", checkedAreas)} match FFXDataParser)"
                 : $"seed {seed}: {problems.Count} problem(s)");
-            foreach (string p in problems.Take(20)) Console.WriteLine($"  {p}");
+            // FFXR_CROSSCHECK_SHOW=<n> shows more problems.
+            foreach (string p in problems.Take(int.TryParse(Environment.GetEnvironmentVariable("FFXR_CROSSCHECK_SHOW"), out int show) ? show : 20)) Console.WriteLine($"  {p}");
             if (problems.Count > 0) failures++;
         }
         return failures == 0 ? 0 : 1;
@@ -510,6 +522,40 @@ internal static partial class CrossCheck
         var full = FullBlitzballEvents(stdout);
         foreach (string missing in VanillaBlitzballEvents.Value.Except(full).Order())
             yield return $"Blitzball: event {missing} no longer holds all eight tables matching bltz0002";
+    }
+
+    /// <summary>
+    /// Every copy of the tables, all 60 players, byte for byte against bltz0002's in the output (the parser's event matching only
+    /// compares players 0-24). A copy in an event another feature grew is looked for where the shared data moved to.
+    /// </summary>
+    private static List<string> CompareBlitzballCopies(VbfArchive original, IReadOnlyDictionary<string, byte[]> files, out int compared)
+    {
+        var problems = new List<string>();
+        compared = 0;
+        var all = BlitzballStats.FindCopies(original);
+        var reference = all.Single(c => c.Path == BlitzballStats.EventPath(BlitzballStats.ReferenceEvent));
+        if (!files.TryGetValue(reference.Path, out byte[]? referenceBytes)) return ["Blitzball: bltz0002 isn't in the output"];
+        var referenceAt = reference.In(original.ReadFile(reference.Path), referenceBytes);
+        foreach (var copy in all)
+        {
+            if (copy == reference) continue;
+            if (!files.TryGetValue(copy.Path, out byte[]? bytes))
+            {
+                problems.Add($"Blitzball: {copy.Path} isn't in the output");
+                continue;
+            }
+            var at = copy.In(original.ReadFile(copy.Path), bytes);
+            foreach (var stat in Enum.GetValues<BlitzStat>())
+            {
+                var ours = bytes.AsSpan(at.Offsets[stat], BlitzballStats.TableBytes);
+                var theirs = referenceBytes.AsSpan(referenceAt.Offsets[stat], BlitzballStats.TableBytes);
+                int differs = ours.CommonPrefixLength(theirs);
+                if (differs < BlitzballStats.TableBytes)
+                    problems.Add($"Blitzball: {copy.Path} {stat} table differs from bltz0002's at player {differs / BlitzGrowth.Size}");
+            }
+            compared++;
+        }
+        return problems;
     }
 
     private static HashSet<string> FullBlitzballEvents(string stdout) =>

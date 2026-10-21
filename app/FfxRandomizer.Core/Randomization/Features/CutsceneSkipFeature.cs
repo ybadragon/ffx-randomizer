@@ -20,16 +20,20 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         string mode = Mode(context.Settings);
         var button = Button(context.Settings);
-        foreach (var scene in Cutscenes.All)
+        foreach (var scenes in Cutscenes.ByEvent)
         {
-            foreach (var (path, bytes) in Cutscenes.Build(context.Original, scene, mode, button)) context.Replace(path, bytes);
-            context.Spoil(Section, new
-            {
-                Scene = scene.Name,
-                scene.Area,
-                Event = scene.EventId,
-                Skip = mode == Cutscenes.Always ? "always" : $"hold {button.Label} for about a second",
-            });
+            // On the files as the features before it left them (an event may hold Blitzball tables).
+            var read = (string path) => context.ChangedFiles.TryGetValue(path, out byte[]? edited) ? edited
+                : context.Original.IndexOf(path) >= 0 ? context.Original.ReadFile(path) : null;
+            foreach (var (path, bytes) in Cutscenes.Build(read, [.. scenes], mode, button)) context.Replace(path, bytes);
+            foreach (var scene in scenes)
+                context.Spoil(Section, new
+                {
+                    Scene = scene.Name,
+                    scene.Area,
+                    Event = scene.EventId,
+                    Skip = mode == Cutscenes.Always ? "always" : $"hold {button.Label} for about a second",
+                });
         }
     }
 
@@ -37,9 +41,14 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         string mode = Mode(context.Settings);
         var button = Button(context.Settings);
-        foreach (var scene in Cutscenes.All)
+        foreach (var scenes in Cutscenes.ByEvent)
         {
-            var expected = Cutscenes.Build(context.Original, scene, mode, button);
+            var scene = scenes.First();
+            // The skip-safety audit, run again here so no edit ships with something it would wrongly bypass.
+            foreach (var s in scenes)
+                foreach (string problem in Cutscenes.AuditOf(context.Original, s).Problems()) yield return $"{s.Name}: {problem}";
+            // Rebuilt from the files as Blitzball (which runs before) left them.
+            var expected = Cutscenes.Build(BlitzballStatsFeature.ReadAsLeft(context), [.. scenes], mode, button);
             foreach (var (path, bytes) in expected)
             {
                 if (!context.ChangedFiles.TryGetValue(path, out byte[]? written))
@@ -50,10 +59,12 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 byte[] original = context.Original.ReadFile(path);
                 if (VbfArchive.BlocksFor((ulong)written.Length) != VbfArchive.BlocksFor((ulong)original.Length))
                     yield return $"{scene.Name}: {path} changed its 64 KB block count.";
-                if (!written.AsSpan().SequenceEqual(bytes))
+                // Soft reset (which runs later) may add its watcher to the event; it checks that part itself.
+                byte[] final = SoftResetFeature.On(context.Settings) ? SoftReset.WithWatcher(path, bytes, SoftResetFeature.Buttons(context.Settings)) : bytes;
+                if (!written.AsSpan().SequenceEqual(final))
                     yield return $"{scene.Name}: {path} isn't what the edit produces (another feature changed it?).";
                 bool isEvent = path.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase);
-                var problems = isEvent ? CheckEvent(original, written, mode) : CheckText(original, written, Cutscenes.PromptCount);
+                var problems = isEvent ? CheckEvent(BlitzballStatsFeature.AsLeft(context, path), bytes, mode) : CheckText(original, written, Cutscenes.PromptCount);
                 foreach (string problem in problems) yield return $"{scene.Name}: {path}: {problem}";
             }
         }
@@ -128,8 +139,11 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                     yield return $"w{w:X2} j{j:X2} points at {a.JumpTarget(w, j):X4}, expected {MapCode(b.JumpTarget(w, j)):X4}.";
             for (int f = b.FunctionCount(w); f < a.FunctionCount(w); f++)
                 if (!InInserted(a.FunctionEntry(w, f))) yield return $"new function w{w:X2}::f{f:X2} doesn't start in inserted code.";
+            // New jumps go to inserted code, or to an original instruction (a scene's exit, or where the scene carries
+            // on after an inserted check).
             for (int j = b.JumpCount(w); j < a.JumpCount(w); j++)
-                if (!InInserted(a.JumpTarget(w, j))) yield return $"new jump w{w:X2} j{j:X2} doesn't point into inserted code.";
+                if (!InInserted(a.JumpTarget(w, j)) && !AtOriginalInstruction(a.JumpTarget(w, j)))
+                    yield return $"new jump w{w:X2} j{j:X2} doesn't point into inserted code or at an original instruction.";
         }
 
         // Everything from the shared data to the first worker table moved by one amount, with pointers moved by it too.
@@ -159,6 +173,14 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         }
 
         bool InInserted(int offset) => inserts.Any(i => offset >= MapCode(i.At) && offset < MapCode(i.At) + i.Length);
+
+        bool AtOriginalInstruction(int offset)
+        {
+            int was = offset - inserts.Where(i => MapCode(i.At) + i.Length <= offset).Sum(i => i.Length);
+            if (was < 0 || was >= originalCode.Length || MapCode(was + 1) - 1 != offset) return false; // where original byte "was" now sits
+            for (int at = 0; at <= was; at += originalCode[at] >= 0x80 ? 3 : 1) if (at == was) return true;
+            return false;
+        }
     }
 
     /// <summary>
@@ -238,6 +260,11 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
                 if (boundary[si]) (bestI, bestJ) = (si, sj);
             }
             (i, j) = (bestI, bestJ);
+            if (!boundary[i])
+            {
+                problem = $"code was inserted inside the original instruction at {Array.FindLastIndex(boundary, i, b => b):X4}.";
+                return inserts;
+            }
             inserts.Add((i, found));
             j += found;
             floor = i + 1;
@@ -253,6 +280,12 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
         if (countA < countB + added) yield return $"has {countA} strings, expected at least {countB + added}.";
         for (int s = 0; s < countB * 2; s++)
         {
+            // An empty slot (offset 0) stays empty.
+            if ((Header(before, s) & 0xFFFF) == 0)
+            {
+                if (Header(after, s) != Header(before, s)) { yield return $"empty string slot {s / 2} changed."; yield break; }
+                continue;
+            }
             if (!StringAt(before, s).SequenceEqual(StringAt(after, s))) { yield return $"string {s / 2} changed."; yield break; }
             if ((Header(before, s) & 0xFFFF0000) != (Header(after, s) & 0xFFFF0000)) { yield return $"string {s / 2} lost its flags."; yield break; }
         }
@@ -281,7 +314,7 @@ public sealed class CutsceneSkipFeature : IRandomizerFeature
     {
         int meta = (int)BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(0x2C));
         if (meta == 0) yield break;
-        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
+        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
         int map = (int)BinaryPrimitives.ReadUInt32LittleEndian(chunk.AsSpan(meta + 0x3C));
         if (map == 0) yield break;
         yield return map + 0x08;

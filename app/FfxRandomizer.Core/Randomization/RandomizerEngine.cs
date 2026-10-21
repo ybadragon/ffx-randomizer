@@ -45,6 +45,8 @@ public static class RandomizerEngine
         new EnemyStatsFeature(),
         new BlitzballStatsFeature(),
         new CutsceneSkipFeature(),
+        // Last: it adds to the event files the features above edited.
+        new SoftResetFeature(),
     ];
 
     public static RunResult Run(VbfArchive original, RandomizerSettings settings, Seed seed, IGameNames? names = null)

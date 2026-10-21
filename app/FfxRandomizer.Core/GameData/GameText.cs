@@ -90,7 +90,8 @@ public sealed class GameText : IGameNames
         {
             Language = language,
             Commands = Table("command.bin").Names(charset),
-            _blitzballPlayers = BlitzballPlayerNames(original, folder, charset, PartyName),
+            _blitzballPlayers = MacroStrings(original, folder, charset, PartyName, 7, BlitzballStats.PlayerCount),
+            _areas = MacroStrings(original, folder, charset, PartyName, 11, int.MaxValue),
         };
     }
 
@@ -100,36 +101,39 @@ public sealed class GameText : IGameNames
     public string? CommandName(int commandId) => (commandId & 0xF000) == CommandBase ? At(Commands, commandId & 0x0FFF) : null;
 
     private string?[] _blitzballPlayers = [];
+    private string?[] _areas = [];
 
     /// <summary>
-    /// Blitzball player names are macro strings (new_XXpc/menu/macrodic.dcp) 0x700 + player: a table of u32 chunk offsets at
-    /// the start of the file, and in chunk 7 a list of (u16 name offset, u16 simplified-name offset) pairs, whose length the
-    /// first offset gives, followed by the strings.
+    /// Macro strings (new_XXpc/menu/macrodic.dcp): a table of u32 chunk offsets at the start of the file, and in each chunk
+    /// a list of (u16 name offset, u16 simplified-name offset) pairs, whose length the first offset gives, followed by the
+    /// strings. Chunk 7 holds the Blitzball player names (0x700 + player), chunk 11 the area names (0xB00 + index).
     /// </summary>
-    private static string?[] BlitzballPlayerNames(VbfArchive original, string folder, FfxCharset charset, Func<int, string?> partyName)
+    private static string?[] MacroStrings(VbfArchive original, string folder, FfxCharset charset, Func<int, string?> partyName, int chunkIndex, int max)
     {
-        const int Chunk = 7;
         string path = $"{GamePaths.Master}{folder}/menu/macrodic.dcp";
         if (original.IndexOf(path) < 0) return [];
         byte[] bytes = original.ReadFile(path);
         uint U32(int offset) => BitConverter.ToUInt32(bytes, offset);
-        int start = (int)U32(Chunk * 4);
+        int start = (int)U32(chunkIndex * 4);
         if (start == 0 || start >= bytes.Length) return [];
         int end = bytes.Length;
-        for (int next = Chunk + 1; next * 4 + 4 <= start; next++)
+        for (int next = chunkIndex + 1; next * 4 + 4 <= start; next++)
         {
             uint offset = U32(next * 4);
             if (offset == uint.MaxValue) break;
             if (offset >= start) { end = (int)offset; break; }
         }
         var chunk = bytes.AsSpan(start, end - start);
-        int count = Math.Min(BitConverter.ToUInt16(chunk) / 4, BlitzballStats.PlayerCount);
+        int count = Math.Min(BitConverter.ToUInt16(chunk) / 4, max);
         var names = new string?[count];
         for (int i = 0; i < count; i++) names[i] = charset.Decode(chunk, BitConverter.ToUInt16(chunk[(i * 4)..]), partyName);
         return names;
     }
 
     public string? BlitzballPlayerName(int player) => At(_blitzballPlayers, player);
+
+    /// <summary>An area's name, by the index an event lists (see <see cref="EventLocation.AreaNameIndexes"/>).</summary>
+    public string? AreaName(int index) => At(_areas, index);
 
     /// <summary>Number of rows in item.bin (items 0x2000 to 0x2000 + ItemCount - 1).</summary>
     public int ItemCount => _items.Length;

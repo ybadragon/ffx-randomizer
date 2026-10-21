@@ -11,8 +11,9 @@ namespace FfxRandomizer.Core.GameData.Events;
 /// worker header offsets from 0x38.</item>
 /// <item>Worker header (0x34 bytes): function count 0x08, jump count 0x0A; pointers to variable declarations 0x14,
 /// ref ints 0x18, ref floats 0x1C, function entries 0x20, jumps 0x24, private data 0x2C, shared data 0x30.</item>
-/// <item>Meta struct header (at 0x2C): pointers at +0x0C, +0x10, +0x18, +0x1C, +0x24, +0x28, +0x2C, +0x3C; the
-/// object at +0x3C holds two more at +0x08 and +0x0C.</item>
+/// <item>Meta struct header (at 0x2C): pointers at +0x0C, +0x10, +0x18, +0x1C, +0x20, +0x24, +0x28, +0x2C, +0x3C (+0x20,
+/// which FFXDataParser reads as a plain value, is 0 in most events and in 25, bsil0300 among them, a pointer to just
+/// below the meta struct); the object at +0x3C holds two more at +0x08 and +0x0C.</item>
 /// <item>After the code: shared data (16-aligned), meta struct, event data, map table, area names, then per worker its
 /// function entry table, jump table and private data. Entry points and jump targets are code offsets.</item>
 /// </list>
@@ -44,6 +45,13 @@ public sealed class EventScriptEditor
     public int FunctionEntry(int worker, int function) => (int)U32(_s, EntrySlot(worker, function));
     public int JumpTarget(int worker, int jump) => (int)U32(_s, JumpSlot(worker, jump));
     public ReadOnlySpan<byte> Code(int offset, int length) => _s.AsSpan(CodeStart + offset, length);
+
+    /// <summary>
+    /// The chunk offsets of the shared data (variables' storage, which comes after the code and moves as one block when
+    /// code is added) and of the first worker's tables, where it ends.
+    /// </summary>
+    public int SharedDataStart => (int)U32(_s, Worker(0) + 0x30);
+    public int WorkerTablesStart => Enumerable.Range(0, WorkerCount).Min(w => (int)U32(_s, Worker(w) + 0x20));
 
     /// <summary>Code inserted so far, as (code offset, length) in the current layout.</summary>
     public IReadOnlyList<(int Offset, int Length)> InsertedCode => _insertedCode;
@@ -117,6 +125,66 @@ public sealed class EventScriptEditor
         int table = (int)U32(_s, Worker(worker) + 0x24);
         GrowTable(table + count * 4, Worker(worker) + 0x24, Worker(worker) + 0x0A, count, codeOffset);
         return count;
+    }
+
+    private const int WorkerHeaderLength = 0x34;
+    private const int ScenarioCountField = 0x16, MainScriptField = 0x18, ActorCountField = 0x36;
+
+    /// <summary>
+    /// Inserts a new worker at <paramref name="index"/> with the given functions (code offsets) and jump labels. Its header
+    /// shares the script's variable declarations, ref ints, ref floats and shared data (as every worker's does) and has
+    /// no private data; its tables go at the end of the chunk. Workers from <paramref name="index"/> on move up one, as
+    /// do the header's main script index and type counts; the caller renumbers references to them in the code. Only a
+    /// Scenario (type 4) worker is supported, since the header counts those.
+    /// </summary>
+    public void AddWorker(int index, int type, IReadOnlyList<int> functions, IReadOnlyList<int> jumps)
+    {
+        if (type != 4) throw new ArgumentException("Only Scenario workers can be added.", nameof(type));
+        int count = WorkerCount;
+        if (index < 0 || index > count) throw new ArgumentOutOfRangeException(nameof(index));
+        // Headers sit in order straight after the worker table; the new one goes in its place among them.
+        for (int w = 0; w < count; w++)
+            if (Worker(w) != WorkerTable + count * 4 + w * WorkerHeaderLength)
+                throw new InvalidDataException("The worker headers aren't laid out in order after the worker table.");
+        // The header first (while the table still lists only the old workers, whose pointers move past it), then the
+        // table slot, which moves every header 4 bytes on.
+        InsertRaw(WorkerTable + count * 4 + index * WorkerHeaderLength, WorkerHeaderLength, excludeFields: []);
+        InsertRaw(WorkerTable + index * 4, 4, excludeFields: []);
+        int headerAt = WorkerTable + (count + 1) * 4 + index * WorkerHeaderLength;
+        W16(_s, WorkerCountField, count + 1);
+        W32(_s, WorkerTable + index * 4, (uint)headerAt);
+
+        // Tables at the end of the chunk: function entries, then jumps.
+        int end = (int)U32(_s, EndField);
+        int tables = functions.Count * 4 + jumps.Count * 4;
+        var header = new byte[WorkerHeaderLength];
+        // Shared: variable count, ref int and ref float counts, and their tables, and the shared data. Read from the
+        // template after the inserts above moved them.
+        var w0 = _s.AsSpan(Worker(index == 0 ? 1 : 0), WorkerHeaderLength);
+        w0[0x02..0x08].CopyTo(header.AsSpan(0x02));
+        foreach (int field in new[] { 0x14, 0x18, 0x1C, 0x30 }) w0.Slice(field, 4).CopyTo(header.AsSpan(field));
+        BinaryPrimitives.WriteUInt16LittleEndian(header, (ushort)type);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x08), (ushort)functions.Count);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x0A), (ushort)jumps.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x20), (uint)end);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x24), (uint)(end + functions.Count * 4));
+        header.CopyTo(_s.AsSpan(headerAt));
+        // The new tables go before the end; the end pointer moves past them, nothing else points there.
+        InsertRaw(end, tables, excludeFields: [headerAt + 0x20, headerAt + 0x24]);
+        for (int f = 0; f < functions.Count; f++) W32(_s, end + f * 4, (uint)functions[f]);
+        for (int j = 0; j < jumps.Count; j++) W32(_s, end + functions.Count * 4 + j * 4, (uint)jumps[j]);
+
+        W16(_s, ScenarioCountField, U16(_s, ScenarioCountField) + 1);
+        W16(_s, ActorCountField, U16(_s, ActorCountField) + 1);
+        // 0xFFFF: no main script.
+        if (U16(_s, MainScriptField) is int mainScript && mainScript >= index && mainScript != 0xFFFF) W16(_s, MainScriptField, mainScript + 1);
+    }
+
+    /// <summary>Sets a 16-bit code operand (the 2 bytes after the opcode at <paramref name="offset"/>).</summary>
+    public void SetOperand(int offset, byte opcode, int operand)
+    {
+        _s[CodeStart + offset] = opcode;
+        W16(_s, CodeStart + offset + 1, operand);
     }
 
     /// <summary>Points an existing function at different code.</summary>
@@ -193,6 +261,42 @@ public sealed class EventScriptEditor
         _edits.Add((at + count, -count));
     }
 
+    /// <summary>
+    /// Aligned words after the code that look like pointers into the data after the code (an offset from the code's end
+    /// to the chunk's end, a multiple of 4) but that the editor doesn't move. Any edit moves that data, so if one of
+    /// these is a pointer it goes stale (a structure the game reads that FFXDataParser doesn't describe). Most may be
+    /// numbers that only look like offsets, but an event with any isn't edited.
+    /// </summary>
+    public IReadOnlyList<(int Field, int Value)> UntrackedPointerCandidates()
+    {
+        int codeEnd = CodeStart + CodeLength, end = _s.Length;
+        var known = PointerFields().ToHashSet();
+        var targets = known.Select(f => (int)U32(_s, f)).Where(v => v > 0).Order().ToList();
+        int NextStructure(int after) => targets.FirstOrDefault(t => t > after, end);
+        // Variables' storage holds game values, not file offsets: the shared data (up to the next structure) and each
+        // worker's private data.
+        var skip = new List<(int From, int To)> { (SharedDataStart, NextStructure(SharedDataStart)) };
+        for (int w = 0; w < WorkerCount; w++)
+            if (U32(_s, Worker(w) + 0x2C) is var p and > 0) skip.Add(((int)p, NextStructure((int)p)));
+        var found = new List<(int, int)>();
+        for (int at = (codeEnd + 3) & ~3; at + 4 <= end; at += 4)
+        {
+            if (known.Contains(at) || skip.Any(r => at >= r.From && at < r.To)) continue;
+            int value = (int)U32(_s, at);
+            if (value >= codeEnd && value < end && value % 4 == 0) found.Add((at, value));
+        }
+        return found;
+    }
+
+    /// <summary>The meta struct's +0x20 word: 0, or a pointer to just below the meta struct (see the summary above).</summary>
+    public int MetaPointer20 => U32(_s, MetaField) is var meta and > 0 ? (int)U32(_s, (int)meta + 0x20) : 0;
+
+    /// <summary>Chunk offsets of every u32 the editor keeps pointing at the right place when things move.</summary>
+    public IReadOnlyList<int> KnownPointerFields => [.. PointerFields()];
+
+    /// <summary>The chunk as it is now (up to its end field), for checks.</summary>
+    public ReadOnlySpan<byte> Chunk => _s;
+
     /// <summary>Chunk offsets of every u32 that holds a chunk-relative pointer.</summary>
     private IEnumerable<int> PointerFields()
     {
@@ -205,7 +309,7 @@ public sealed class EventScriptEditor
         }
         int meta = (int)U32(_s, MetaField);
         if (meta == 0) yield break;
-        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
+        foreach (int field in new[] { 0x0C, 0x10, 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C, 0x3C }) yield return meta + field;
         int mapPointers = (int)U32(_s, meta + 0x3C);
         if (mapPointers == 0) yield break;
         yield return mapPointers + 0x08;

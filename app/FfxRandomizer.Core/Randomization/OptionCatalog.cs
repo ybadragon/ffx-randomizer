@@ -1,5 +1,6 @@
 using FfxRandomizer.Core.GameData;
 using FfxRandomizer.Core.GameData.Events;
+using FfxRandomizer.Core.Randomization.Features;
 
 namespace FfxRandomizer.Core.Randomization;
 
@@ -36,7 +37,17 @@ public sealed record OptionDropdown(
     IReadOnlyList<Choice> Choices,
     IReadOnlySet<string> ShownFor,
     string? Hint = null,
-    IReadOnlyDictionary<string, string>? Warnings = null);
+    IReadOnlyDictionary<string, string>? Warnings = null)
+{
+    /// <summary>
+    /// For a dropdown that also takes values not in <see cref="Choices"/> (a recorded button combo): the label of such a
+    /// value, or null when it isn't valid.
+    /// </summary>
+    public Func<string, string?>? LabelOf { get; init; }
+
+    /// <summary>The label of a value: its choice's, or what <see cref="LabelOf"/> makes of it; null when it isn't valid.</summary>
+    public string? LabelFor(string id) => Choices.FirstOrDefault(c => c.Id == id)?.Label ?? LabelOf?.Invoke(id);
+}
 
 public sealed record OptionTab(string Id, string Label, string Blurb, IReadOnlyList<OptionGroup> Groups);
 
@@ -153,8 +164,8 @@ public static class OptionCatalog
         new("story", "Story", "How the story plays out.",
         [
             Pick("cutscenes", "Skip cutscenes",
-                "Covers one scene so far: the Zanarkand Ruins campfire that opens the game. With Hold button to skip (recommended), a prompt fills while you hold the skip button during the scene; after about a second the scene ends and the story moves on. The late-game return to the campfire isn't skipped.",
-                "Experimental: only the opening scene has been played through. If a skip ever leaves you stuck, use Restore original.",
+                "Covers 38 scenes that end by moving you to another area: the Dream Zanarkand opening, Besaid, and scenes across the game (Kilika, Luca, Mushroom Rock, the Moonflow, Guadosalam, the Thunder Plains, Macalania, the airship, Mt. Gagazet, Zanarkand). With Hold button to skip (recommended), a prompt fills while you hold the skip button during the scene; after about a second the scene ends and the story moves on. Later visits to these places play as usual.",
+                "Experimental: 7 of these scenes have been played through; the rest pass the static safety checks but are untested in-game. If a room crashes or a skip leaves you stuck, set Skip cutscenes to Original and randomize again.",
                 new(Cutscenes.Original, "Original"), new(Cutscenes.Hold, "Hold button to skip"), new(Cutscenes.Always, "Always skip"))
                 with
                 {
@@ -167,6 +178,8 @@ public static class OptionCatalog
                         Warnings: SkipButtons.All.Where(b => b.AdvancesDialogue).ToDictionary(b => b.Id,
                             b => $"{b.Label} also advances dialogue, so holding it may skip lines before the scene skips.")),
                 },
+            // Soft reset isn't released (see SoftResetFeature.Available); the box only shows in development builds.
+            .. (SoftResetFeature.Available ? new[] { SoftResetFeature.Group } : []),
         ]),
         new("general", "General", "Settings that apply to the whole randomizer.",
         [

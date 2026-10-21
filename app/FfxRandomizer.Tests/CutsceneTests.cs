@@ -45,9 +45,106 @@ public class CutsceneTests
 
         var result = RandomizerEngine.Run(original, Settings(mode, button), new Seed("cutscenes"));
         Assert.Empty(result.Problems);
-        Assert.Equal(mode == "hold" ? 9 : 1, result.Files.Count); // the event, plus every language's text for the prompt
+        // Each event, plus every language's text for its prompts.
+        Assert.Equal(Cutscenes.ByEvent.Count() * (mode == "hold" ? 9 : 1), result.Files.Count);
         foreach (var (path, bytes) in result.Files)
             Assert.Equal(VbfArchive.BlocksFor((ulong)original.ReadFile(path).Length), VbfArchive.BlocksFor((ulong)bytes.Length));
+    }
+
+    [Fact]
+    public void Every_scene_passes_the_skip_safety_audit()
+    {
+        if (Original.Value is not { } original) return;
+
+        foreach (var scene in Cutscenes.All)
+        {
+            var audit = Cutscenes.AuditOf(original, scene);
+            Assert.True(audit.Safe, $"{scene.EventId} {scene.Name}: {string.Join("; ", audit.Problems())}");
+        }
+    }
+
+    [Fact]
+    public void A_scene_whose_skip_would_lose_progress_is_refused()
+    {
+        if (Original.Value is not { } original) return;
+
+        // znkd0801's GameMoment 12 path writes a computed save variable, which a skip can't replay. (The event also has a
+        // word the re-layout gate refuses, so Build would refuse it for that first; this checks the audit.)
+        var scene = new SkippableScene("Dream Zanarkand highway, before the first battle", "Zanarkand", "znkd0801", SceneWorker: 0x45,
+            SceneStart: new(0x7327, [0xAE, 0x00, 0x00, 0xD8, 0xE9, 0x00, 0x9F, 0x00, 0x00]),
+            Exit: new(Worker: 0x46, Jump: -1, CodeOffset: 0x7D6E, Expected: [0xAE, 0x1D, 0x00, 0xAE, 0x22, 0x00]),
+            MomentBelow: 13, MessageWindow: 3, HostWorker: 0x4E, MomentFrom: 12);
+        Assert.False(Cutscenes.AuditOf(original, scene).Safe);
+        Assert.Throws<UnsafeSkipException>(() => Cutscenes.Build(original, scene, Cutscenes.Always, SkipButtons.Default));
+    }
+
+    [Fact]
+    public void A_skippable_scene_in_an_event_with_Blitzball_tables_keeps_the_randomized_tables()
+    {
+        if (Original.Value is not { } original) return;
+
+        var settings = Settings("hold");
+        settings.Choices["blitz"] = "random";
+        var result = RandomizerEngine.Run(original, settings, new Seed("blitz and cutscenes"));
+        Assert.Empty(result.Problems);
+        // hiku1900 (Airship - Bridge) holds the tables and gets a skip: the skip's code moves them, and they stay randomized.
+        var copy = BlitzballStats.FindCopies(original).Single(c => c.Path == Cutscenes.EventPath("hiku1900"));
+        Assert.Contains(Cutscenes.All, s => s.EventId == "hiku1900");
+        byte[] written = result.Files[copy.Path];
+        Assert.NotEqual(original.ReadFile(copy.Path).Length, written.Length);
+        var tables = BlitzballStats.FromCopy(written, copy.In(original.ReadFile(copy.Path), written));
+        var reference = BlitzballStats.FindCopies(original).Single(c => c.Path == BlitzballStats.EventPath(BlitzballStats.ReferenceEvent));
+        var randomized = BlitzballStats.FromCopy(result.Files[reference.Path], reference.In(original.ReadFile(reference.Path), result.Files[reference.Path]));
+        Assert.All(Enum.GetValues<BlitzStat>(), stat => Assert.Equal(randomized.Encode(stat), tables.Encode(stat)));
+        Assert.NotEqual(BlitzballStats.Read(original).Encode(BlitzStat.HP), tables.Encode(BlitzStat.HP));
+    }
+
+    [Theory]
+    [InlineData("bsil0300")] // meta +0x20 pointer
+    [InlineData("znkd0801")] // a word that looks like an untracked pointer
+    public void Events_the_re_layout_gate_refuses_are_not_edited(string eventId)
+    {
+        if (Original.Value is not { } original) return;
+
+        var script = new EventScriptEditor(EventFile.Read(original.ReadFile(Cutscenes.EventPath(eventId))).Chunk(EventFile.ScriptChunk)!);
+        Assert.NotNull(Cutscenes.RelayoutRisk(script));
+        Assert.DoesNotContain(Cutscenes.All, s => s.EventId == eventId);
+    }
+
+    [Fact]
+    public void Every_known_pointer_still_points_at_the_same_bytes_after_code_is_inserted()
+    {
+        if (Original.Value is not { } original) return;
+
+        // Including the meta struct's +0x20, which bsil0300 crashed without (it holds a pointer in 25 events).
+        foreach (string path in SoftReset.FieldEvents(original).Select(Cutscenes.EventPath))
+        {
+            byte[] chunk = EventFile.Read(original.ReadFile(path)).Chunk(EventFile.ScriptChunk)!;
+            var before = new EventScriptEditor(chunk);
+            var fields = before.KnownPointerFields;
+            var targets = fields.Select(f => BitConverter.ToInt32(chunk, f)).ToList();
+            // Function entry and jump tables hold code offsets, which move with inserted code on purpose.
+            var codeTables = Enumerable.Range(0, before.WorkerCount).SelectMany(w => new[] { 0x20, 0x24 }.Select(o => BitConverter.ToInt32(chunk, 0x38 + w * 4) + o)).ToHashSet();
+            // (An empty structure can share its address with one of those tables.)
+            var codeTableStarts = codeTables.Select(f => BitConverter.ToInt32(chunk, f)).ToHashSet();
+            var after = new EventScriptEditor(chunk);
+            after.InsertCode(0, new byte[0x40]);
+            byte[] edited = after.ToBytes();
+            // Checked on its own too, not just as one of the fields the editor lists: the meta struct's +0x20.
+            if (before.MetaPointer20 is int was and > 0)
+            {
+                int now = BitConverter.ToInt32(edited, BitConverter.ToInt32(edited, 0x2C) + 0x20);
+                Assert.True(chunk.AsSpan(was, 8).SequenceEqual(edited.AsSpan(now, 8)), $"{path}: the meta struct's +0x20 pointer lost its data");
+            }
+            for (int i = 0; i < fields.Count; i++)
+            {
+                // 0x10 is the chunk's end, not a structure; 0x30 the code start, where the inserted code now is.
+                if (fields[i] is 0x10 or 0x30 || codeTables.Contains(fields[i]) || codeTableStarts.Contains(targets[i]) || targets[i] <= 0 || targets[i] >= chunk.Length) continue;
+                int field = after.Map(fields[i]), target = BitConverter.ToInt32(edited, field);
+                int length = Math.Min(8, Math.Min(chunk.Length - targets[i], edited.Length - target));
+                Assert.True(length > 0 && chunk.AsSpan(targets[i], length).SequenceEqual(edited.AsSpan(target, length)), $"{path}: the pointer at {fields[i]:X} lost its data");
+            }
+        }
     }
 
     [Fact]
@@ -136,7 +233,7 @@ public class CutsceneTests
         changed[0x40 + BitConverter.ToInt32(changed, 0x40 + 0x30) + Campfire.SceneStart.Offset] ^= 1;
         byte[]? Read(string p) => p == path ? changed : original.IndexOf(p) >= 0 ? original.ReadFile(p) : null;
 
-        var error = Assert.Throws<EventMismatchException>(() => Cutscenes.Build(Read, Campfire, Cutscenes.Hold, SkipButtons.Default));
+        var error = Assert.Throws<EventMismatchException>(() => Cutscenes.Build(Read, [Campfire], Cutscenes.Hold, SkipButtons.Default));
         Assert.Contains("znkd0600", error.Message);
     }
 
@@ -179,5 +276,6 @@ public class CutsceneTests
         Assert.Equal("square", SkipButtons.FromXbox("X")!.Id);
         Assert.Equal(8, SkipButtons.ById("select").Index);
         Assert.Null(SkipButtons.FromXbox("LeftThumb"));
+        Assert.Null(SkipButtons.FromXbox("DPadUp"));
     }
 }

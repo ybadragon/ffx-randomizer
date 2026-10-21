@@ -79,6 +79,18 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
         return donor;
     }
 
+    /// <summary>What the features after this one make of an event file, given it as this one leaves it.</summary>
+    private static byte[] LaterEdits(RandomizerContext context, string path, byte[] tabled)
+    {
+        byte[] result = tabled;
+        string id = Path.GetFileNameWithoutExtension(path);
+        if (new CutsceneSkipFeature().IsEnabled(context.Settings) && Cutscenes.ByEvent.FirstOrDefault(g => g.Key.Equals(id, StringComparison.OrdinalIgnoreCase)) is { } scenes)
+            result = Cutscenes.Build(p => p.Equals(path, StringComparison.OrdinalIgnoreCase) ? tabled : context.Original.IndexOf(p) >= 0 ? context.Original.ReadFile(p) : null,
+                [.. scenes], CutsceneSkipFeature.Mode(context.Settings), CutsceneSkipFeature.Button(context.Settings))[path];
+        if (SoftResetFeature.On(context.Settings)) result = SoftReset.WithWatcher(path, result, SoftResetFeature.Buttons(context.Settings));
+        return result;
+    }
+
     private static object Describe(BlitzGrowth g) => new
     {
         formula = g.Formula(),
@@ -118,6 +130,31 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
 
     private static IEnumerable<int> Levels => Enumerable.Range(MinLevel, MaxLevel - MinLevel + 1);
 
+    /// <summary>
+    /// An event file as this feature leaves it, rebuilt from what was finally written (features after it, like the
+    /// cutscene skip, may have added code, which moves the tables along): the original with the written tables. The
+    /// original when Blitzball is off or the event holds no tables.
+    /// </summary>
+    public static byte[] AsLeft(RandomizerContext context, string path)
+    {
+        byte[] original = context.Original.ReadFile(path);
+        if (!new BlitzballStatsFeature().IsEnabled(context.Settings) || !context.ChangedFiles.TryGetValue(path, out byte[]? written)) return original;
+        if (BlitzballStats.FindCopies(context.Original).FirstOrDefault(c => c.Path.Equals(path, StringComparison.OrdinalIgnoreCase)) is not { } copy)
+            return original;
+        byte[] tabled = (byte[])original.Clone();
+        BlitzballStats.FromCopy(written, copy.In(original, written)).WriteTo(tabled, copy);
+        return tabled;
+    }
+
+    /// <summary>
+    /// Reads a file as the features up to and including this one leave it (see <see cref="AsLeft"/>), for features after
+    /// it to rebuild their own edits on; null for files the archive doesn't have.
+    /// </summary>
+    public static Func<string, byte[]?> ReadAsLeft(RandomizerContext context) => path =>
+        context.Original.IndexOf(path) < 0 ? null
+        : path.EndsWith(".ebp", StringComparison.OrdinalIgnoreCase) ? AsLeft(context, path)
+        : context.Original.ReadFile(path);
+
     public IEnumerable<string> Validate(RandomizerContext context)
     {
         var original = BlitzballStats.Read(context.Original);
@@ -133,7 +170,7 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
             yield return $"Blitzball: {copies[0].Path} wasn't updated.";
             yield break;
         }
-        var written = BlitzballStats.FromCopy(first, copies[0]);
+        var written = BlitzballStats.FromCopy(first, copies[0].In(context.Original.ReadFile(copies[0].Path), first));
         bool sane = context.Settings.IsOn("sane");
         bool stars = context.Settings.IsOn("blitzstars");
 
@@ -145,18 +182,24 @@ public sealed class BlitzballStatsFeature : IRandomizerFeature
                 continue;
             }
             byte[] before = context.Original.ReadFile(copy.Path);
-            if (bytes.Length != before.Length)
-            {
-                yield return $"Blitzball: {copy.Path} changed size.";
-                continue;
-            }
-            var mine = BlitzballStats.FromCopy(bytes, copy);
+            // Soft reset adds code to field events, which moves the tables (shared data) along; nothing else may change.
+            // Later features may edit the event too (cutscene skips, soft reset), adding code that moves the tables along;
+            // then the file must be exactly what they make of the original with these tables.
+            bool grown = bytes.Length != before.Length;
+            var mine = BlitzballStats.FromCopy(bytes, copy.In(before, bytes));
             foreach (var stat in Enum.GetValues<BlitzStat>())
             {
                 if (!mine.Encode(stat).AsSpan().SequenceEqual(written.Encode(stat)))
                     yield return $"Blitzball: {copy.Path} has a different {stat} table than {copies[0].Path}.";
             }
-            if (FirstChangeOutsideTables(before, bytes, copy) is int at)
+            if (grown)
+            {
+                byte[] tabled = (byte[])before.Clone();
+                mine.WriteTo(tabled, copy);
+                if (!LaterEdits(context, copy.Path, tabled).AsSpan().SequenceEqual(bytes))
+                    yield return $"Blitzball: {copy.Path} isn't its stat tables plus the later features' edits.";
+            }
+            else if (FirstChangeOutsideTables(before, bytes, copy) is int at)
                 yield return $"Blitzball: {copy.Path} changed outside the stat tables at 0x{at:X}.";
         }
 

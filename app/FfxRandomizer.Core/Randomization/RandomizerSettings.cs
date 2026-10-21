@@ -23,7 +23,7 @@ public sealed class RandomizerSettings
         Choices.TryGetValue(group.Id, out string? id) && group.Choices.Any(c => c.Id == id) ? id : group.Choices[0].Id;
 
     public string ChoiceOf(OptionDropdown dropdown) =>
-        Choices.TryGetValue(dropdown.Id, out string? id) && dropdown.Choices.Any(c => c.Id == id) ? id : dropdown.Choices[0].Id;
+        Choices.TryGetValue(dropdown.Id, out string? id) && dropdown.LabelFor(id) is not null ? id : dropdown.Choices[0].Id;
 
     /// <summary>Whether a box's dropdown applies: the box is in use with one of the choices the dropdown belongs to.</summary>
     public bool DropdownApplies(OptionGroup group) =>

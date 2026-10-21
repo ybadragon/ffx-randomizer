@@ -81,7 +81,7 @@
                                 <ComboBox ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedValuePath="Id"
                                           SelectedValue="{Binding SelectedId}" MinWidth="180" AutomationProperties.Name="{Binding Label}" />
                                 <Button Style="{StaticResource SecondaryButton}" Content="Record…" Margin="8,0,0,0"
-                                        Command="{Binding RecordCommand}" ToolTip="Press the button on your controller (5 seconds)"
+                                        Command="{Binding RecordCommand}" ToolTip="Record it from your controller"
                                         Visibility="{Binding CanRecord, Converter={StaticResource Show}}" />
                             </StackPanel>
                             <TextBlock Text="{Binding RecordStatus}" Style="{StaticResource Small}" Margin="0,6,0,0" TextWrapping="Wrap" />
