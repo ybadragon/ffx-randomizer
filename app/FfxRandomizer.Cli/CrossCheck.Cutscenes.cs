@@ -17,14 +17,16 @@ internal static partial class CrossCheck
     /// <item>the parser resolves the watcher's prompt strings to the "Hold ... to skip" text.</item>
     /// </list>
     /// </summary>
-    private static IEnumerable<string> CompareCutscenes(VbfArchive original, RandomizerSettings settings, IReadOnlyDictionary<string, byte[]> files)
+    private static IEnumerable<string> CompareCutscenes(VbfArchive original, RandomizerSettings settings, IReadOnlyDictionary<string, byte[]> files, bool blitzball)
     {
         string mode = CutsceneSkipFeature.Mode(settings);
         var button = CutsceneSkipFeature.Button(settings);
         foreach (var group in Cutscenes.ByEvent)
         {
             string eventId = group.Key;
-            var (ours, listingProblems, lines, changes) = CompareListing(original, files, eventId, mode);
+            // Randomized Blitzball tables show up in the variables' values; the Blitzball comparison checks those.
+            var (ours, listingProblems, lines, changes) = CompareListing(original, files, eventId, mode,
+                ignore: blitzball ? l => l.Contains("BlitzballStatGrowthTable", StringComparison.Ordinal) : null);
             foreach (string p in listingProblems) yield return p;
             // Worker numbers as they are in the edited event (the soft reset may have added a worker before them).
             int W(int worker) => Renumbered(original, eventId, files[Cutscenes.EventPath(eventId)], worker);

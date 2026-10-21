@@ -185,7 +185,7 @@ internal static partial class CrossCheck
             }
             if (result.Spoiler[CutsceneSkipFeature.Section] is JsonArray scenes)
             {
-                problems.AddRange(CompareCutscenes(original, result.Settings, files));
+                problems.AddRange(CompareCutscenes(original, result.Settings, files, result.Spoiler[BlitzballStatsFeature.Section] is not null));
                 checkedAreas.Add($"{scenes.Count} skippable scene(s)");
             }
             if (result.Spoiler[SoftResetFeature.Section] is not null)
